@@ -2,7 +2,7 @@
   "name": "overleaf-connect",
   "displayName": "Overleaf Connect",
   "description": "Use Overleaf without leaving VS Code. Sync projects via Git and compile LaTeX locally.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "tansuasici",
   "license": "MIT",
   "engines": {
@@ -200,7 +200,7 @@
         },
         "overleafconnect.viewer.zoomLevel": {
           "type": "number",
-          "default": 1.0,
+          "default": 1,
           "description": "Default zoom level for PDF preview."
         },
         "overleafconnect.overleaf.serverUrl": {
