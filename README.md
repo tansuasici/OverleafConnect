@@ -49,19 +49,6 @@ Press `F5` in VS Code to launch the extension in debug mode.
 | `npm run lint` | ESLint |
 | `npm run test` | Run tests |
 
-### Project Structure
-
-```
-src/
-  extension.ts        # Entry point, activation, command registration
-  auth/               # Overleaf authentication & credential storage
-  sync/               # Git sync engine, file watcher, conflict handling
-  latex/              # LaTeX/BibTeX compiler, log parser
-  viewer/             # PDF preview panel, SyncTeX
-  ui/                 # Status bar, output channel
-  utils/              # Config, logger
-```
-
 ## Contributing
 
 1. Fork the repo
