@@ -2,7 +2,7 @@
   "name": "overleaf-connect",
   "displayName": "Overleaf Connect",
   "description": "Use Overleaf without leaving VS Code. Sync projects via Git and compile LaTeX locally.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "tansuasici",
   "license": "MIT",
   "engines": {
