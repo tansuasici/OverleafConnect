@@ -1,7 +1,7 @@
 {
   "name": "overleaf-connect",
   "displayName": "Overleaf Connect",
-  "description": "Sync Overleaf projects via Git and compile LaTeX locally with full editor integration.",
+  "description": "Use Overleaf without leaving VS Code. Sync projects via Git and compile LaTeX locally.",
   "version": "0.1.1",
   "publisher": "tansuasici",
   "license": "MIT",

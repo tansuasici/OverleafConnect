@@ -5,6 +5,10 @@
 <h1 align="center">Overleaf Connect</h1>
 
 <p align="center">
+  <em>Use Overleaf without leaving VS Code.</em>
+</p>
+
+<p align="center">
   <strong>Sync Overleaf projects via Git and compile LaTeX locally with full VS Code integration.</strong>
 </p>
 
