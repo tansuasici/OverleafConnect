@@ -26,6 +26,7 @@
 - **LaTeX compilation** (latexmk, pdflatex, xelatex, lualatex) with BibTeX/Biber
 - **Built-in PDF viewer** with SyncTeX forward/inverse search
 - **LaTeX Workshop compatible** - handles only Git sync when LaTeX Workshop is installed
+- **Smart .gitignore** - auto-generates `.gitignore` for build artifacts (`.aux`, `.log`, `.pdf`, etc.) and detects already-tracked files
 - **Self-hosted Overleaf** support
 
 ## Setup
