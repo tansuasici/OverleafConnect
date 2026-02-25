@@ -28,36 +28,24 @@
 - **LaTeX Workshop compatible** - handles only Git sync when LaTeX Workshop is installed
 - **Self-hosted Overleaf** support
 
-## Development
+## Setup
 
-```bash
-git clone https://github.com/tansuasici/OverleafConnect.git
-cd OverleafConnect
-npm install
-npm run watch
+1. Install the extension from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=tansuasici.overleaf-connect)
+2. Open Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
+3. Run **Overleaf Connect: Clone Overleaf Project**
+4. Enter your Overleaf project URL or ID
+5. Enter your [Git token](https://www.overleaf.com/user/settings) (Account Settings > Git Integration)
+6. Choose a local folder
+
+Auto-sync starts immediately.
+
+## Self-Hosted Overleaf
+
+```json
+{
+  "overleafconnect.overleaf.serverUrl": "https://git.your-overleaf-instance.com"
+}
 ```
-
-Press `F5` in VS Code to launch the extension in debug mode.
-
-### Scripts
-
-| Command | Description |
-|---------|-------------|
-| `npm run compile` | Compile TypeScript |
-| `npm run watch` | Watch mode |
-| `npm run package` | Production build (webpack) |
-| `npm run lint` | ESLint |
-| `npm run test` | Run tests |
-
-## Contributing
-
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Make your changes and run `npm run lint && npm run test`
-4. Commit and push
-5. Open a pull request
-
-Bug reports and feature requests are welcome via [Issues](https://github.com/tansuasici/OverleafConnect/issues).
 
 ## License
 
