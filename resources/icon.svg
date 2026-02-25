@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2D8B4E;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1A5C32;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background rounded rectangle -->
+  <rect x="4" y="4" width="120" height="120" rx="24" ry="24" fill="url(#bg)" />
+  <!-- Leaf shape -->
+  <path d="M64 28 C40 40, 28 60, 32 85 C36 75, 44 65, 64 58 C84 65, 92 75, 96 85 C100 60, 88 40, 64 28Z"
+        fill="#4ADE80" opacity="0.9"/>
+  <!-- Leaf vein (center) -->
+  <line x1="64" y1="32" x2="64" y2="80" stroke="#1A5C32" stroke-width="2" stroke-linecap="round"/>
+  <!-- Leaf veins (sides) -->
+  <line x1="64" y1="50" x2="48" y2="62" stroke="#1A5C32" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="64" y1="50" x2="80" y2="62" stroke="#1A5C32" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="64" y1="60" x2="52" y2="72" stroke="#1A5C32" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="64" y1="60" x2="76" y2="72" stroke="#1A5C32" stroke-width="1.5" stroke-linecap="round"/>
+  <!-- Sync arrows (circular) -->
+  <path d="M44 92 A22 22 0 0 1 84 92" fill="none" stroke="white" stroke-width="3" stroke-linecap="round"/>
+  <polygon points="84,86 84,98 92,92" fill="white"/>
+  <path d="M84 100 A22 22 0 0 1 44 100" fill="none" stroke="white" stroke-width="3" stroke-linecap="round"/>
+  <polygon points="44,94 44,106 36,100" fill="white"/>
+</svg>

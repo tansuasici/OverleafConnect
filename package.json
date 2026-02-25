@@ -1,0 +1,262 @@
+{
+  "name": "overleaf-connect",
+  "displayName": "Overleaf Connect",
+  "description": "Sync Overleaf projects via Git and compile LaTeX locally with full editor integration.",
+  "version": "0.1.0",
+  "publisher": "overleaf-connect",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "latex",
+    "overleaf",
+    "git",
+    "sync",
+    "tex",
+    "pdf",
+    "bibtex"
+  ],
+  "icon": "resources/icon.png",
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/*.tex",
+    "workspaceContains:.overleafconnect",
+    "onCommand:overleafconnect.configure",
+    "onCommand:overleafconnect.cloneProject"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "overleafconnect.configure",
+        "title": "Configure Overleaf Connection",
+        "category": "Overleaf Connect"
+      },
+      {
+        "command": "overleafconnect.cloneProject",
+        "title": "Clone Overleaf Project",
+        "category": "Overleaf Connect"
+      },
+      {
+        "command": "overleafconnect.syncNow",
+        "title": "Sync Now",
+        "category": "Overleaf Connect",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "overleafconnect.pauseSync",
+        "title": "Pause Auto-Sync",
+        "category": "Overleaf Connect"
+      },
+      {
+        "command": "overleafconnect.resumeSync",
+        "title": "Resume Auto-Sync",
+        "category": "Overleaf Connect"
+      },
+      {
+        "command": "overleafconnect.compile",
+        "title": "Compile LaTeX",
+        "category": "Overleaf Connect",
+        "icon": "$(play)"
+      },
+      {
+        "command": "overleafconnect.viewPdf",
+        "title": "View PDF",
+        "category": "Overleaf Connect",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "overleafconnect.syncTexForward",
+        "title": "SyncTeX Forward Search",
+        "category": "Overleaf Connect"
+      },
+      {
+        "command": "overleafconnect.clean",
+        "title": "Clean Auxiliary Files",
+        "category": "Overleaf Connect"
+      },
+      {
+        "command": "overleafconnect.showLog",
+        "title": "Show Compilation Log",
+        "category": "Overleaf Connect"
+      },
+      {
+        "command": "overleafconnect.logout",
+        "title": "Clear Overleaf Credentials",
+        "category": "Overleaf Connect"
+      }
+    ],
+    "configuration": {
+      "title": "Overleaf Connect",
+      "properties": {
+        "overleafconnect.sync.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic sync with Overleaf."
+        },
+        "overleafconnect.sync.intervalSeconds": {
+          "type": "number",
+          "default": 10,
+          "minimum": 5,
+          "maximum": 600,
+          "description": "Auto-sync interval in seconds."
+        },
+        "overleafconnect.sync.commitMessage": {
+          "type": "string",
+          "default": "Overleaf Connect auto-sync",
+          "description": "Default commit message for auto-sync pushes."
+        },
+        "overleafconnect.sync.pullOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pull latest changes when opening the workspace."
+        },
+        "overleafconnect.sync.pushOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Push immediately after saving (in addition to interval sync)."
+        },
+        "overleafconnect.sync.excludePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "*.aux",
+            "*.log",
+            "*.synctex.gz",
+            "*.fls",
+            "*.fdb_latexmk",
+            "*.bbl",
+            "*.blg",
+            "*.out",
+            "*.toc"
+          ],
+          "description": "File patterns to exclude from sync (added to .gitignore)."
+        },
+        "overleafconnect.latex.compiler": {
+          "type": "string",
+          "enum": [
+            "latexmk",
+            "pdflatex",
+            "xelatex",
+            "lualatex"
+          ],
+          "default": "latexmk",
+          "description": "LaTeX compiler to use."
+        },
+        "overleafconnect.latex.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "-pdf",
+            "-interaction=nonstopmode",
+            "-synctex=1"
+          ],
+          "description": "Additional arguments passed to the LaTeX compiler."
+        },
+        "overleafconnect.latex.outputDir": {
+          "type": "string",
+          "default": ".",
+          "description": "Output directory for compiled files (relative to workspace root)."
+        },
+        "overleafconnect.latex.compileOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically compile when a .tex file is saved."
+        },
+        "overleafconnect.latex.mainFile": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the main .tex file (auto-detected if empty)."
+        },
+        "overleafconnect.latex.bibCompiler": {
+          "type": "string",
+          "enum": [
+            "bibtex",
+            "biber"
+          ],
+          "default": "bibtex",
+          "description": "BibTeX compiler to use."
+        },
+        "overleafconnect.viewer.autoOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open PDF preview after compilation."
+        },
+        "overleafconnect.viewer.zoomLevel": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Default zoom level for PDF preview."
+        },
+        "overleafconnect.overleaf.serverUrl": {
+          "type": "string",
+          "default": "https://git.overleaf.com",
+          "description": "Overleaf Git server URL (change for self-hosted instances)."
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "overleafconnect.compile",
+        "key": "ctrl+alt+b",
+        "mac": "cmd+alt+b",
+        "when": "editorLangId == latex"
+      },
+      {
+        "command": "overleafconnect.viewPdf",
+        "key": "ctrl+alt+v",
+        "mac": "cmd+alt+v",
+        "when": "editorLangId == latex"
+      },
+      {
+        "command": "overleafconnect.syncNow",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s"
+      },
+      {
+        "command": "overleafconnect.syncTexForward",
+        "key": "ctrl+alt+j",
+        "mac": "cmd+alt+j",
+        "when": "editorLangId == latex"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "webpack": "webpack --mode development",
+    "webpack-dev": "webpack --mode development --watch",
+    "lint": "eslint src --ext ts",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js"
+  },
+  "dependencies": {
+    "simple-git": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "@types/mocha": "^10.0.0",
+    "@vscode/test-electron": "^2.3.0",
+    "@vscode/vsce": "^2.22.0",
+    "typescript": "^5.3.0",
+    "mocha": "^10.2.0",
+    "sinon": "^17.0.0",
+    "@types/sinon": "^17.0.0",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.0",
+    "ts-loader": "^9.5.0",
+    "eslint": "^8.56.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0"
+  }
+}
