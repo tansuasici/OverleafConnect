@@ -142,7 +142,14 @@
             "*.bbl",
             "*.blg",
             "*.out",
-            "*.toc"
+            "*.toc",
+            "*.pdf",
+            "*.nav",
+            "*.snm",
+            "*.vrb",
+            "*.lot",
+            "*.lof",
+            "%OUTDIR%/"
           ],
           "description": "File patterns to exclude from sync (added to .gitignore)."
         },

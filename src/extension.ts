@@ -16,6 +16,7 @@ import { SyncTexService } from './viewer/synctex';
 import { SyncState } from './types';
 import { getConfig } from './utils/config';
 import { getOutputChannel } from './ui/outputChannel';
+import { ensureGitignore } from './utils/gitignore';
 
 let syncManager: SyncManager | undefined;
 let statusBar: StatusBarManager | undefined;
@@ -92,6 +93,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           projectUrl: creds.projectUrl,
           configured: true,
         }, null, 2));
+
+        // Create .gitignore with exclude patterns
+        await ensureGitignore(destPath, config.sync.excludePatterns);
 
         const openChoice = await vscode.window.showInformationMessage(
           'Overleaf Connect: Project cloned successfully!',
@@ -342,6 +346,9 @@ async function initializeSync(
     gitEngine.dispose();
     return;
   }
+
+  // Ensure .gitignore has exclude patterns
+  await ensureGitignore(workspacePath, config.sync.excludePatterns);
 
   const fileWatcher = new FileWatcher(workspacePath);
   syncManager = new SyncManager(gitEngine, fileWatcher, config);
