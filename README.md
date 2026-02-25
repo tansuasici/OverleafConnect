@@ -1,6 +1,18 @@
-# Overleaf Connect
+<p align="center">
+  <img src="resources/icon.png" alt="Overleaf Connect Logo" width="150">
+</p>
 
-**Sync Overleaf projects via Git and compile LaTeX locally with full VS Code integration.**
+<h1 align="center">Overleaf Connect</h1>
+
+<p align="center">
+  <strong>Sync Overleaf projects via Git and compile LaTeX locally with full VS Code integration.</strong>
+</p>
+
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=tansuasici.overleaf-connect"><img src="https://img.shields.io/visual-studio-marketplace/v/tansuasici.overleaf-connect?label=VS%20Code%20Marketplace" alt="VS Code Marketplace"></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=tansuasici.overleaf-connect"><img src="https://img.shields.io/visual-studio-marketplace/i/tansuasici.overleaf-connect" alt="Installs"></a>
+  <a href="https://github.com/tansuasici/OverleafConnect/blob/main/LICENSE"><img src="https://img.shields.io/github/license/tansuasici/OverleafConnect" alt="License"></a>
+</p>
 
 Overleaf Connect bridges Overleaf and VS Code, letting you edit LaTeX projects locally while keeping everything synchronized with your Overleaf collaborators. Use the full power of VS Code extensions, AI assistants, and local tools while your team continues working on Overleaf.
 
