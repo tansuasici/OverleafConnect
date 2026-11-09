@@ -234,8 +234,11 @@ export class SyncManager implements vscode.Disposable {
     );
   }
 
+  /** Also disposes the git engine and file watcher it was given, which it owns from then on. */
   dispose(): void {
     this.stop();
+    this.gitEngine.dispose();
+    this.fileWatcher.dispose();
     this._onStateChange.dispose();
     this.conflictHandler.dispose();
     this.logger.dispose();

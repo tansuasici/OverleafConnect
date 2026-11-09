@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import simpleGit from 'simple-git';
 import { getConfig } from '../utils/config';
+import { pickProjectUrl, readMarker, resolveProjectUrl, writeMarker } from './projectUrl';
 
 const SECRET_KEY_TOKEN = 'overleafconnect.overleaf.token';
-const SECRET_KEY_PROJECT_URL = 'overleafconnect.overleaf.projectUrl';
+/** Older versions kept one project URL for every workspace; it is only read now, to migrate it. */
+const SECRET_KEY_LEGACY_PROJECT_URL = 'overleafconnect.overleaf.projectUrl';
 
 export class AuthManager implements vscode.Disposable {
   private secretStorage: vscode.SecretStorage;
@@ -22,55 +24,49 @@ export class AuthManager implements vscode.Disposable {
 
   async deleteToken(): Promise<void> {
     await this.secretStorage.delete(SECRET_KEY_TOKEN);
-    await this.secretStorage.delete(SECRET_KEY_PROJECT_URL);
+    await this.secretStorage.delete(SECRET_KEY_LEGACY_PROJECT_URL);
     vscode.window.showInformationMessage('Overleaf Connect: Overleaf credentials cleared.');
   }
 
-  async getProjectUrl(): Promise<string | undefined> {
-    return this.secretStorage.get(SECRET_KEY_PROJECT_URL);
-  }
-
-  async setProjectUrl(url: string): Promise<void> {
-    await this.secretStorage.store(SECRET_KEY_PROJECT_URL, url);
-  }
-
-  async isAuthenticated(): Promise<boolean> {
-    const token = await this.getToken();
-    const url = await this.getProjectUrl();
-    return !!token && !!url;
-  }
-
   /**
-   * Accepts project ID, Overleaf project URL, or full Git URL.
-   * Examples:
-   *   "682abc123def"
-   *   "https://www.overleaf.com/project/682abc123def"
-   *   "https://git.overleaf.com/682abc123def"
+   * The project a folder syncs with: its .overleafconnect marker, else its origin remote. A URL saved
+   * globally by an older version is moved into the marker of the folder whose origin it matches.
    */
-  private resolveProjectUrl(input: string): string | null {
-    const trimmed = input.trim();
-    const serverUrl = getConfig().overleaf.serverUrl.replace(/\/$/, '');
-
-    // Already a full git URL
-    if (/^https:\/\/.+\/[a-f0-9]+$/i.test(trimmed)) {
-      return trimmed;
+  async getProjectUrl(folderPath: string): Promise<string | undefined> {
+    const legacyUrl = await this.secretStorage.get(SECRET_KEY_LEGACY_PROJECT_URL);
+    let originUrl: string | undefined;
+    try {
+      originUrl = await simpleGit({ baseDir: folderPath }).remote(['get-url', 'origin']) || undefined;
+    } catch {
+      originUrl = undefined;
     }
-
-    // Overleaf web project URL: https://www.overleaf.com/project/<id>
-    const webMatch = trimmed.match(/overleaf\.com\/project\/([a-f0-9]+)/i);
-    if (webMatch) {
-      return `${serverUrl}/${webMatch[1]}`;
+    const resolved = pickProjectUrl({
+      marker: readMarker(folderPath),
+      originUrl,
+      legacyUrl,
+      serverUrl: getConfig().overleaf.serverUrl,
+    });
+    if (resolved?.source === 'legacy') {
+      try {
+        writeMarker(folderPath, resolved.url);
+        await this.secretStorage.delete(SECRET_KEY_LEGACY_PROJECT_URL);
+      } catch {
+        // Keep the old key; the folder still resolves through it next time.
+      }
     }
-
-    // Bare project ID (hex string, typically 24 chars)
-    if (/^[a-f0-9]+$/i.test(trimmed)) {
-      return `${serverUrl}/${trimmed}`;
-    }
-
-    return null;
+    return resolved?.url;
   }
 
-  async promptForCredentials(): Promise<{ token: string; projectUrl: string } | undefined> {
+  async isAuthenticated(folderPath: string): Promise<boolean> {
+    const token = await this.getToken();
+    return !!token && !!(await this.getProjectUrl(folderPath));
+  }
+
+  private resolveProjectUrl(input: string): string | null {
+    return resolveProjectUrl(input, getConfig().overleaf.serverUrl);
+  }
+
+  async promptForCredentials(folderPath: string): Promise<{ token: string; projectUrl: string } | undefined> {
     const rawInput = await vscode.window.showInputBox({
       title: 'Overleaf Connect: Overleaf Project',
       prompt: 'Enter project ID, Overleaf URL, or Git URL',
@@ -120,14 +116,15 @@ export class AuthManager implements vscode.Disposable {
     }
 
     await this.setToken(token);
-    await this.setProjectUrl(projectUrl);
+    writeMarker(folderPath, projectUrl);
 
     vscode.window.showInformationMessage('Overleaf Connect: Successfully connected to Overleaf!');
     return { token, projectUrl };
   }
 
   /**
-   * For clone: always asks project ID, reuses existing token if available.
+   * For clone: always asks project ID, reuses existing token if available. The caller writes the
+   * project URL into the new folder's marker, so the open workspace keeps its own project.
    * No pre-validation - clone itself serves as validation.
    */
   async promptForClone(): Promise<{ token: string; projectUrl: string } | undefined> {
@@ -171,7 +168,6 @@ export class AuthManager implements vscode.Disposable {
       await this.setToken(token);
     }
 
-    await this.setProjectUrl(projectUrl);
     return { token, projectUrl };
   }
 

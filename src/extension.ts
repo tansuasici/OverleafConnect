@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as fs from 'fs';
 import simpleGit from 'simple-git';
 
 import { AuthManager } from './auth/authManager';
@@ -9,14 +8,16 @@ import { FileWatcher } from './sync/fileWatcher';
 import { SyncManager } from './sync/syncManager';
 import { StatusBarManager } from './ui/statusBar';
 import { BuildSyncGate, OVERTEX_ID, OVERTEX_SYNC_EXCLUDES, OvertexBuildEvents } from './latex/overtex';
+import { SyncGroup } from './sync/syncGroup';
+import { writeMarker } from './auth/projectUrl';
 import { SyncState } from './types';
 import { getConfig } from './utils/config';
 import { getOutputChannel } from './ui/outputChannel';
 import { ensureGitignore } from './utils/gitignore';
 
-let syncManager: SyncManager | undefined;
+const syncs = new SyncGroup<SyncManager>();
 let statusBar: StatusBarManager | undefined;
-const buildSyncGate = new BuildSyncGate(() => syncManager);
+const buildSyncGate = new BuildSyncGate(() => (syncs.size ? syncs : undefined));
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const outputChannel = getOutputChannel();
@@ -27,7 +28,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Initialize status bar
   statusBar = new StatusBarManager();
-  context.subscriptions.push(statusBar);
+  context.subscriptions.push(statusBar, syncs);
 
   // Overtex (a dependency) builds and previews; its output must not be pushed to Overleaf.
   const syncExcludes = () => [...config.sync.excludePatterns, ...OVERTEX_SYNC_EXCLUDES];
@@ -35,9 +36,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // ---- Register Sync Commands ----
   context.subscriptions.push(
     vscode.commands.registerCommand('overleafconnect.configure', async () => {
-      const creds = await authManager.promptForCredentials();
-      if (creds && vscode.workspace.workspaceFolders?.length) {
-        await initializeSync(context, authManager, config, syncExcludes());
+      const folder = await pickFolder();
+      if (!folder) {
+        return;
+      }
+      const creds = await authManager.promptForCredentials(folder.uri.fsPath);
+      if (creds) {
+        await initializeSync(folder, authManager, config, syncExcludes());
       }
     })
   );
@@ -85,11 +90,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         );
 
         // Create .overleafconnect marker
-        const markerPath = path.join(destPath, '.overleafconnect');
-        fs.writeFileSync(markerPath, JSON.stringify({
-          projectUrl: creds.projectUrl,
-          configured: true,
-        }, null, 2));
+        writeMarker(destPath, creds.projectUrl);
 
         // Create .gitignore with exclude patterns
         await ensureGitignore(destPath, syncExcludes());
@@ -114,8 +115,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand('overleafconnect.syncNow', async () => {
-      if (syncManager) {
-        await syncManager.syncNow();
+      if (syncs.size) {
+        await syncs.syncNow();
       } else {
         vscode.window.showWarningMessage('Overleaf Connect: Not connected to Overleaf. Please configure first.');
       }
@@ -125,7 +126,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('overleafconnect.pauseSync', () => {
       buildSyncGate.release();
-      syncManager?.pause();
+      syncs.pause();
       statusBar?.update(SyncState.Disabled);
       vscode.window.showInformationMessage('Overleaf Connect: Auto-sync paused.');
     })
@@ -134,7 +135,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('overleafconnect.resumeSync', () => {
       buildSyncGate.release();
-      syncManager?.resume();
+      syncs.resume();
       statusBar?.update(SyncState.Idle);
       vscode.window.showInformationMessage('Overleaf Connect: Auto-sync resumed.');
     })
@@ -143,8 +144,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('overleafconnect.logout', async () => {
       await authManager.deleteToken();
-      syncManager?.stop();
-      syncManager = undefined;
+      syncs.clear();
       statusBar?.update(SyncState.NotConfigured);
     })
   );
@@ -162,27 +162,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // ---- Sync on save ----
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(async (doc) => {
-      if (syncManager && (doc.languageId === 'latex' || doc.fileName.endsWith('.bib'))) {
+      const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+      const sync = folder && syncs.get(folder.uri.fsPath);
+      if (sync && (doc.languageId === 'latex' || doc.fileName.endsWith('.bib'))) {
         outputChannel.appendLine('[Overleaf Connect] File saved, triggering sync...');
-        await syncManager.syncNow();
+        await sync.syncNow();
       }
     })
   );
 
   // ---- Initialize Sync if already configured ----
-  if (await authManager.isAuthenticated() && vscode.workspace.workspaceFolders?.length) {
-    await initializeSync(context, authManager, config, syncExcludes());
-  } else {
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    if (await authManager.isAuthenticated(folder.uri.fsPath)) {
+      await initializeSync(folder, authManager, config, syncExcludes());
+    }
+  }
+  if (!syncs.size) {
     statusBar.update(SyncState.NotConfigured);
   }
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(async (e) => {
+      e.removed.forEach((folder) => syncs.remove(folder.uri.fsPath));
+      for (const folder of e.added) {
+        if (await authManager.isAuthenticated(folder.uri.fsPath)) {
+          await initializeSync(folder, authManager, config, syncExcludes());
+        }
+      }
+      if (!syncs.size) {
+        statusBar?.update(SyncState.NotConfigured);
+      }
+    })
+  );
 
   // ---- React to config changes ----
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('overleafconnect')) {
-        if (syncManager && e.affectsConfiguration('overleafconnect.sync.intervalSeconds')) {
-          syncManager.stop();
-          syncManager.start();
+        if (e.affectsConfiguration('overleafconnect.sync.intervalSeconds')) {
+          syncs.stop();
+          syncs.start();
         }
         outputChannel.appendLine('[Overleaf Connect] Configuration updated');
       }
@@ -192,21 +211,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   outputChannel.appendLine('[Overleaf Connect] Extension activated');
 }
 
+/** The only folder, or the one the user picks when the workspace has several. */
+async function pickFolder(): Promise<vscode.WorkspaceFolder | undefined> {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  if (folders.length <= 1) {
+    if (!folders.length) {
+      vscode.window.showWarningMessage('Overleaf Connect: Open a folder first.');
+    }
+    return folders[0];
+  }
+  return vscode.window.showWorkspaceFolderPick({ placeHolder: 'Folder to connect to an Overleaf project' });
+}
+
 async function initializeSync(
-  context: vscode.ExtensionContext,
+  folder: vscode.WorkspaceFolder,
   authManager: AuthManager,
   config: ReturnType<typeof getConfig>,
   excludePatterns: string[]
 ): Promise<void> {
-  // Dispose previous sync instance if reconfiguring
-  if (syncManager) {
-    syncManager.dispose();
-    syncManager = undefined;
-  }
+  const workspacePath = folder.uri.fsPath;
+  syncs.remove(workspacePath);
 
-  const workspacePath = vscode.workspace.workspaceFolders![0].uri.fsPath;
-  const token = (await authManager.getToken())!;
-  const projectUrl = (await authManager.getProjectUrl())!;
+  const token = await authManager.getToken();
+  const projectUrl = await authManager.getProjectUrl(workspacePath);
+  if (!token || !projectUrl) {
+    return;
+  }
 
   const gitEngine = new GitEngine({
     workspacePath,
@@ -215,36 +245,27 @@ async function initializeSync(
     token,
   });
 
-  // Check if it's a git repo
-  const isRepo = await gitEngine.isGitRepo();
-  if (!isRepo) {
-    const outputChannel = getOutputChannel();
-    outputChannel.appendLine('[Overleaf Connect] Workspace is not a git repository. Use "Clone Overleaf Project" first.');
-    statusBar?.update(SyncState.NotConfigured);
+  if (!(await gitEngine.isGitRepo())) {
+    getOutputChannel().appendLine(`[Overleaf Connect] ${folder.name} is not a git repository. Use "Clone Overleaf Project" first.`);
     gitEngine.dispose();
     return;
   }
 
-  // Ensure .gitignore has exclude patterns
   await ensureGitignore(workspacePath, excludePatterns);
 
   const fileWatcher = new FileWatcher(workspacePath);
-  syncManager = new SyncManager(gitEngine, fileWatcher, config);
+  const syncManager = new SyncManager(gitEngine, fileWatcher, config);
+  syncs.set(workspacePath, syncManager);
 
-  // Wire up status bar
   syncManager.onDidChangeState((state) => statusBar!.update(state));
 
-  // Pull on open
   if (config.sync.pullOnOpen) {
     await syncManager.syncNow();
   }
 
-  // Start auto-sync
   if (config.sync.enabled) {
     syncManager.start();
   }
-
-  context.subscriptions.push(gitEngine, fileWatcher, syncManager);
 }
 
 /** Holds sync back during every Overtex build, including the ones it starts on save. */
@@ -269,5 +290,5 @@ async function followOvertexBuilds(
 }
 
 export function deactivate(): void {
-  syncManager?.stop();
+  syncs.stop();
 }
