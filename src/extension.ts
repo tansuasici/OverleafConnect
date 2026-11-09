@@ -8,19 +8,7 @@ import { GitEngine } from './sync/gitEngine';
 import { FileWatcher } from './sync/fileWatcher';
 import { SyncManager } from './sync/syncManager';
 import { StatusBarManager } from './ui/statusBar';
-import { LaTeXCompiler } from './latex/compiler';
-import { LogParser } from './latex/logParser';
-import { BibTeXManager } from './latex/bibtex';
-import { PdfPreviewPanel } from './viewer/pdfPanel';
-import { SyncTexService } from './viewer/synctex';
-import {
-  BuildSyncGate,
-  chooseLatexBackend,
-  LatexBackend,
-  OVERTEX_ID,
-  OVERTEX_SYNC_EXCLUDES,
-  OvertexBuildEvents,
-} from './latex/overtex';
+import { BuildSyncGate, OVERTEX_ID, OVERTEX_SYNC_EXCLUDES, OvertexBuildEvents } from './latex/overtex';
 import { SyncState } from './types';
 import { getConfig } from './utils/config';
 import { getOutputChannel } from './ui/outputChannel';
@@ -41,9 +29,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   statusBar = new StatusBarManager();
   context.subscriptions.push(statusBar);
 
-  // Decide who handles LaTeX: Overtex, LaTeX Workshop, or the built-in compiler
-  const backend = chooseLatexBackend((id) => !!vscode.extensions.getExtension(id));
-  const syncExcludes = () => excludePatternsFor(backend, config.sync.excludePatterns);
+  // Overtex (a dependency) builds and previews; its output must not be pushed to Overleaf.
+  const syncExcludes = () => [...config.sync.excludePatterns, ...OVERTEX_SYNC_EXCLUDES];
 
   // ---- Register Sync Commands ----
   context.subscriptions.push(
@@ -168,175 +155,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
-  // ---- LaTeX Features ----
-  if (backend === 'overtex') {
-    context.subscriptions.push(
-      vscode.commands.registerCommand('overleafconnect.compile', () =>
-        vscode.commands.executeCommand('overtex.build')
-      ),
-      vscode.commands.registerCommand('overleafconnect.viewPdf', () =>
-        vscode.commands.executeCommand('overtex.viewPdf')
-      ),
-      vscode.commands.registerCommand('overleafconnect.syncTexForward', () =>
-        vscode.commands.executeCommand('overtex.forwardSearch')
-      ),
-      vscode.commands.registerCommand('overleafconnect.clean', () =>
-        vscode.commands.executeCommand('overtex.clean')
-      )
-    );
+  // ---- Follow Overtex builds ----
+  // Not awaited: sync must start even if Overtex is slow to activate or fails to.
+  void followOvertexBuilds(context, outputChannel);
 
-    // Not awaited: sync must start even if Overtex is slow to activate or fails to.
-    void followOvertexBuilds(context, outputChannel);
-
-    outputChannel.appendLine('[Overleaf Connect] Overtex detected - deferring LaTeX features');
-  } else if (backend === 'builtin') {
-    const compiler = new LaTeXCompiler(outputChannel);
-    const logParser = new LogParser();
-    const pdfPanel = new PdfPreviewPanel(context.extensionUri);
-    const synctex = new SyncTexService();
-    const bibtex = new BibTeXManager(outputChannel);
-
-    context.subscriptions.push(compiler, logParser, pdfPanel, synctex, bibtex);
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand('overleafconnect.compile', async () => {
-        const texFile = getMainTexFile(config);
-        if (!texFile) {
-          vscode.window.showWarningMessage('Overleaf Connect: No .tex file found to compile.');
-          return;
-        }
-
-        syncManager?.pause();
-
-        const result = await compiler.compile(texFile, config);
-
-        // Parse log and update diagnostics
-        if (result.logFile) {
-          const rootDir = path.dirname(texFile);
-          const entries = logParser.parse(result.logFile, rootDir);
-          logParser.updateDiagnostics(entries, rootDir);
-        }
-
-        // Show PDF
-        if (result.success && result.pdfFile && config.viewer.autoOpen) {
-          pdfPanel.show(result.pdfFile);
-        } else if (!result.success) {
-          vscode.window.showErrorMessage('Overleaf Connect: Compilation failed. Check Problems panel.');
-        }
-
-        syncManager?.resume();
-        // Immediately sync after compilation so changes appear on Overleaf
-        syncManager?.syncNow();
-      })
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand('overleafconnect.viewPdf', () => {
-        const texFile = getMainTexFile(config);
-        if (!texFile) {
-          return;
-        }
-        const baseName = path.basename(texFile, '.tex');
-        const pdfPath = path.join(path.dirname(texFile), config.latex.outputDir, `${baseName}.pdf`);
-        if (fs.existsSync(pdfPath)) {
-          pdfPanel.show(pdfPath);
-        } else {
-          vscode.window.showWarningMessage('Overleaf Connect: No PDF found. Compile first.');
-        }
-      })
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand('overleafconnect.syncTexForward', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.languageId !== 'latex') {
-          return;
-        }
-
-        const texFile = editor.document.uri.fsPath;
-        const line = editor.selection.active.line + 1;
-        const column = editor.selection.active.character;
-        const baseName = path.basename(texFile, '.tex');
-        const pdfFile = path.join(path.dirname(texFile), `${baseName}.pdf`);
-
-        const pos = await synctex.forward(texFile, line, column, pdfFile);
-        if (pos) {
-          pdfPanel.syncForward(pos.page, pos.x, pos.y);
-        }
-      })
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand('overleafconnect.clean', async () => {
-        const texFile = getMainTexFile(config);
-        if (texFile) {
-          await compiler.clean(texFile);
-          logParser.clear();
-          vscode.window.showInformationMessage('Overleaf Connect: Auxiliary files cleaned.');
-        }
-      })
-    );
-
-    // Compile on save
-    if (config.latex.compileOnSave) {
-      context.subscriptions.push(
-        vscode.workspace.onDidSaveTextDocument(async (doc) => {
-          if (doc.languageId === 'latex') {
-            await vscode.commands.executeCommand('overleafconnect.compile');
-          }
-        })
-      );
-    }
-
-    // BibTeX completions
-    context.subscriptions.push(bibtex.registerCompletionProvider());
-
-    outputChannel.appendLine('[Overleaf Connect] LaTeX features enabled (LaTeX Workshop not detected)');
-  } else {
-    // Register noop commands to prevent errors
-    context.subscriptions.push(
-      vscode.commands.registerCommand('overleafconnect.compile', () => {
-        vscode.window.showInformationMessage(
-          'Overleaf Connect: LaTeX compilation is handled by LaTeX Workshop.'
-        );
-      }),
-      vscode.commands.registerCommand('overleafconnect.viewPdf', () => {
-        vscode.commands.executeCommand('latex-workshop.view');
-      }),
-      vscode.commands.registerCommand('overleafconnect.syncTexForward', () => {
-        vscode.commands.executeCommand('latex-workshop.synctex');
-      }),
-      vscode.commands.registerCommand('overleafconnect.clean', () => {
-        vscode.commands.executeCommand('latex-workshop.clean');
-      })
-    );
-
-    outputChannel.appendLine('[Overleaf Connect] LaTeX Workshop detected - deferring LaTeX features');
-  }
-
-  // The backend is fixed for this session, so installing or removing Overtex needs a reload.
-  let reloadOffered = false;
-  context.subscriptions.push(
-    vscode.extensions.onDidChange(() => {
-      const hasOvertex = !!vscode.extensions.getExtension(OVERTEX_ID);
-      if (reloadOffered || hasOvertex === (backend === 'overtex')) {
-        return;
-      }
-      reloadOffered = true;
-      void vscode.window
-        .showInformationMessage(
-          'Overleaf Connect: Reload the window to change which extension builds your LaTeX.',
-          'Reload Window'
-        )
-        .then((choice) => {
-          if (choice === 'Reload Window') {
-            void vscode.commands.executeCommand('workbench.action.reloadWindow');
-          }
-        });
-    })
-  );
-
-  // ---- Sync on save (works regardless of the LaTeX backend) ----
+  // ---- Sync on save ----
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(async (doc) => {
       if (syncManager && (doc.languageId === 'latex' || doc.fileName.endsWith('.bib'))) {
@@ -424,10 +247,6 @@ async function initializeSync(
   context.subscriptions.push(gitEngine, fileWatcher, syncManager);
 }
 
-function excludePatternsFor(backend: LatexBackend, patterns: string[]): string[] {
-  return backend === 'overtex' ? [...patterns, ...OVERTEX_SYNC_EXCLUDES] : patterns;
-}
-
 /** Holds sync back during every Overtex build, including the ones it starts on save. */
 async function followOvertexBuilds(
   context: vscode.ExtensionContext,
@@ -447,50 +266,6 @@ async function followOvertexBuilds(
     const msg = error instanceof Error ? error.message : String(error);
     outputChannel.appendLine(`[Overleaf Connect] Could not connect to Overtex: ${msg}`);
   }
-}
-
-function getMainTexFile(config: ReturnType<typeof getConfig>): string | null {
-  // If main file is configured, use it
-  if (config.latex.mainFile) {
-    const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (workspacePath) {
-      return path.join(workspacePath, config.latex.mainFile);
-    }
-  }
-
-  // Try active editor
-  const editor = vscode.window.activeTextEditor;
-  if (editor && editor.document.languageId === 'latex') {
-    return editor.document.uri.fsPath;
-  }
-
-  // Auto-detect: look for main.tex or any .tex with \documentclass
-  const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!workspacePath) {
-    return null;
-  }
-
-  const mainTex = path.join(workspacePath, 'main.tex');
-  if (fs.existsSync(mainTex)) {
-    return mainTex;
-  }
-
-  // Search for \documentclass in .tex files
-  try {
-    const files = fs.readdirSync(workspacePath);
-    for (const file of files) {
-      if (file.endsWith('.tex')) {
-        const content = fs.readFileSync(path.join(workspacePath, file), 'utf-8');
-        if (content.includes('\\documentclass')) {
-          return path.join(workspacePath, file);
-        }
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  return null;
 }
 
 export function deactivate(): void {

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <strong>Sync Overleaf projects via Git and compile LaTeX locally with full VS Code integration.</strong>
+  <strong>Sync Overleaf projects via Git. <a href="https://marketplace.visualstudio.com/items?itemName=tansuasici.overtex">Overtex</a> builds and previews them.</strong>
 </p>
 
 <p align="center">
@@ -23,10 +23,7 @@
 - **Automatic two-way sync** with Overleaf via Git
 - **Clone Overleaf projects** directly from VS Code
 - **Conflict detection** with guided resolution
-- **LaTeX compilation** (latexmk, pdflatex, xelatex, lualatex) with BibTeX/Biber
-- **Built-in PDF viewer** with SyncTeX forward/inverse search
-- **Overtex compatible** - when [Overtex](https://marketplace.visualstudio.com/items?itemName=tansuasici.overtex) is installed, it builds and previews while this extension handles Git sync, and sync waits for each build to finish
-- **LaTeX Workshop compatible** - handles only Git sync when LaTeX Workshop is installed
+- **Works with [Overtex](https://marketplace.visualstudio.com/items?itemName=tansuasici.overtex)** - Overtex builds, previews and handles SyncTeX; it is installed with this extension. Sync waits for each build to finish
 - **Smart .gitignore** - auto-excludes build artifacts from sync
 - **Self-hosted Overleaf** support
 

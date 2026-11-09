@@ -1,7 +1,7 @@
 {
   "name": "overleaf-connect",
   "displayName": "Overleaf Connect",
-  "description": "Use Overleaf without leaving VS Code. Sync projects via Git and compile LaTeX locally.",
+  "description": "Use Overleaf without leaving VS Code. Syncs Overleaf projects via Git; Overtex builds and previews them.",
   "version": "0.1.8",
   "publisher": "tansuasici",
   "license": "MIT",
@@ -17,9 +17,7 @@
     "overleaf",
     "git",
     "sync",
-    "tex",
-    "pdf",
-    "bibtex"
+    "tex"
   ],
   "icon": "resources/icon.png",
   "repository": {
@@ -31,6 +29,9 @@
     "url": "https://github.com/tansuasici/OverleafConnect/issues"
   },
   "main": "./out/extension.js",
+  "extensionDependencies": [
+    "tansuasici.overtex"
+  ],
   "activationEvents": [
     "workspaceContains:**/*.tex",
     "workspaceContains:.overleafconnect",
@@ -66,30 +67,8 @@
         "category": "Overleaf Connect"
       },
       {
-        "command": "overleafconnect.compile",
-        "title": "Compile LaTeX",
-        "category": "Overleaf Connect",
-        "icon": "$(play)"
-      },
-      {
-        "command": "overleafconnect.viewPdf",
-        "title": "View PDF",
-        "category": "Overleaf Connect",
-        "icon": "$(open-preview)"
-      },
-      {
-        "command": "overleafconnect.syncTexForward",
-        "title": "SyncTeX Forward Search",
-        "category": "Overleaf Connect"
-      },
-      {
-        "command": "overleafconnect.clean",
-        "title": "Clean Auxiliary Files",
-        "category": "Overleaf Connect"
-      },
-      {
         "command": "overleafconnect.showLog",
-        "title": "Show Compilation Log",
+        "title": "Show Sync Log",
         "category": "Overleaf Connect"
       },
       {
@@ -153,63 +132,6 @@
           ],
           "description": "File patterns to exclude from sync (added to .gitignore)."
         },
-        "overleafconnect.latex.compiler": {
-          "type": "string",
-          "enum": [
-            "latexmk",
-            "pdflatex",
-            "xelatex",
-            "lualatex"
-          ],
-          "default": "latexmk",
-          "description": "LaTeX compiler to use."
-        },
-        "overleafconnect.latex.args": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [
-            "-pdf",
-            "-interaction=nonstopmode",
-            "-synctex=1"
-          ],
-          "description": "Additional arguments passed to the LaTeX compiler."
-        },
-        "overleafconnect.latex.outputDir": {
-          "type": "string",
-          "default": ".",
-          "description": "Output directory for compiled files (relative to workspace root)."
-        },
-        "overleafconnect.latex.compileOnSave": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically compile when a .tex file is saved. Has no effect when Overtex or LaTeX Workshop is installed; they run their own builds."
-        },
-        "overleafconnect.latex.mainFile": {
-          "type": "string",
-          "default": "",
-          "description": "Path to the main .tex file (auto-detected if empty)."
-        },
-        "overleafconnect.latex.bibCompiler": {
-          "type": "string",
-          "enum": [
-            "bibtex",
-            "biber"
-          ],
-          "default": "bibtex",
-          "description": "BibTeX compiler to use."
-        },
-        "overleafconnect.viewer.autoOpen": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically open PDF preview after compilation."
-        },
-        "overleafconnect.viewer.zoomLevel": {
-          "type": "number",
-          "default": 1,
-          "description": "Default zoom level for PDF preview."
-        },
         "overleafconnect.overleaf.serverUrl": {
           "type": "string",
           "default": "https://git.overleaf.com",
@@ -219,27 +141,9 @@
     },
     "keybindings": [
       {
-        "command": "overleafconnect.compile",
-        "key": "ctrl+alt+b",
-        "mac": "cmd+alt+b",
-        "when": "editorLangId == latex"
-      },
-      {
-        "command": "overleafconnect.viewPdf",
-        "key": "ctrl+alt+v",
-        "mac": "cmd+alt+v",
-        "when": "editorLangId == latex"
-      },
-      {
         "command": "overleafconnect.syncNow",
         "key": "ctrl+alt+s",
         "mac": "cmd+alt+s"
-      },
-      {
-        "command": "overleafconnect.syncTexForward",
-        "key": "ctrl+alt+j",
-        "mac": "cmd+alt+j",
-        "when": "editorLangId == latex"
       }
     ]
   },

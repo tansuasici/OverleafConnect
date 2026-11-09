@@ -1,17 +1,7 @@
 import type * as vscode from 'vscode';
 
+/** Overtex builds, previews and searches; this extension depends on it and only syncs. */
 export const OVERTEX_ID = 'tansuasici.overtex';
-export const LATEX_WORKSHOP_ID = 'James-Yu.latex-workshop';
-
-export type LatexBackend = 'overtex' | 'latex-workshop' | 'builtin';
-
-/** Overtex wins over LaTeX Workshop: it warns about a double build with LaTeX Workshop itself. */
-export function chooseLatexBackend(isInstalled: (id: string) => boolean): LatexBackend {
-  if (isInstalled(OVERTEX_ID)) {
-    return 'overtex';
-  }
-  return isInstalled(LATEX_WORKSHOP_ID) ? 'latex-workshop' : 'builtin';
-}
 
 /** Files Overtex leaves in the project that the default exclude patterns do not cover. */
 export const OVERTEX_SYNC_EXCLUDES = ['*-arxiv.zip', 'overtex-diff-*/', '*.bcf', '*.run.xml', '*.xdv'];

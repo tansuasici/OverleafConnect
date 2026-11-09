@@ -1,11 +1,5 @@
 import * as assert from 'assert';
-import {
-  BuildSyncGate,
-  chooseLatexBackend,
-  LATEX_WORKSHOP_ID,
-  OVERTEX_ID,
-  PausableSync,
-} from '../../src/latex/overtex';
+import { BuildSyncGate, PausableSync } from '../../src/latex/overtex';
 
 function fakeSync(paused = false): PausableSync & { paused: boolean; synced: number } {
   return {
@@ -26,22 +20,6 @@ function fakeSync(paused = false): PausableSync & { paused: boolean; synced: num
 }
 
 suite('Overtex handoff', () => {
-  suite('chooseLatexBackend', () => {
-    const installed = (...ids: string[]) => (id: string) => ids.includes(id);
-
-    test('uses the built-in compiler when neither is installed', () => {
-      assert.strictEqual(chooseLatexBackend(installed()), 'builtin');
-    });
-
-    test('defers to LaTeX Workshop alone', () => {
-      assert.strictEqual(chooseLatexBackend(installed(LATEX_WORKSHOP_ID)), 'latex-workshop');
-    });
-
-    test('prefers Overtex when both are installed', () => {
-      assert.strictEqual(chooseLatexBackend(installed(LATEX_WORKSHOP_ID, OVERTEX_ID)), 'overtex');
-    });
-  });
-
   suite('BuildSyncGate', () => {
     test('pauses during a build, then resumes and syncs', async () => {
       const sync = fakeSync();

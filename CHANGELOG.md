@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- Overtex is now a required dependency and is installed with this extension. It handles compile, PDF preview, SyncTeX and clean; Overleaf Connect handles only Git sync
+
+### Removed
+- The built-in LaTeX compiler, BibTeX/Biber step, log parser, PDF viewer and SyncTeX
+- LaTeX Workshop mode
+- The Compile, View PDF, SyncTeX Forward and Clean commands and their keybindings (Overtex has its own)
+- The `overleafconnect.latex.*` and `overleafconnect.viewer.*` settings
+
 ## [0.1.8] - 2026-11-09
 
 ### Changed
