@@ -184,7 +184,7 @@
         "overleafconnect.latex.compileOnSave": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically compile when a .tex file is saved."
+          "description": "Automatically compile when a .tex file is saved. Has no effect when Overtex or LaTeX Workshop is installed; they run their own builds."
         },
         "overleafconnect.latex.mainFile": {
           "type": "string",

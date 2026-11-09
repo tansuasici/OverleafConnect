@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- When Overtex is installed, it handles compile, PDF preview, SyncTeX and clean, and Overleaf Connect handles only Git sync. If LaTeX Workshop is also installed, Overtex is the one used
+- Sync waits while an Overtex build runs, then syncs. A pause you set yourself stays in place
+- With Overtex, its output (`*-arxiv.zip`, `overtex-diff-*/`, `*.bcf`, `*.run.xml`, `*.xdv`) is added to `.gitignore` so it is not pushed to Overleaf
+
 ## [0.1.0] - 2026-02-25
 
 ### Added

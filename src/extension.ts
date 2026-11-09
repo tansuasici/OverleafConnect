@@ -13,6 +13,14 @@ import { LogParser } from './latex/logParser';
 import { BibTeXManager } from './latex/bibtex';
 import { PdfPreviewPanel } from './viewer/pdfPanel';
 import { SyncTexService } from './viewer/synctex';
+import {
+  BuildSyncGate,
+  chooseLatexBackend,
+  LatexBackend,
+  OVERTEX_ID,
+  OVERTEX_SYNC_EXCLUDES,
+  OvertexBuildEvents,
+} from './latex/overtex';
 import { SyncState } from './types';
 import { getConfig } from './utils/config';
 import { getOutputChannel } from './ui/outputChannel';
@@ -20,6 +28,7 @@ import { ensureGitignore } from './utils/gitignore';
 
 let syncManager: SyncManager | undefined;
 let statusBar: StatusBarManager | undefined;
+const buildSyncGate = new BuildSyncGate(() => syncManager);
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const outputChannel = getOutputChannel();
@@ -32,15 +41,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   statusBar = new StatusBarManager();
   context.subscriptions.push(statusBar);
 
-  // Check if LaTeX Workshop is installed
-  const hasLatexWorkshop = !!vscode.extensions.getExtension('James-Yu.latex-workshop');
+  // Decide who handles LaTeX: Overtex, LaTeX Workshop, or the built-in compiler
+  const backend = chooseLatexBackend((id) => !!vscode.extensions.getExtension(id));
+  const syncExcludes = () => excludePatternsFor(backend, config.sync.excludePatterns);
 
   // ---- Register Sync Commands ----
   context.subscriptions.push(
     vscode.commands.registerCommand('overleafconnect.configure', async () => {
       const creds = await authManager.promptForCredentials();
       if (creds && vscode.workspace.workspaceFolders?.length) {
-        await initializeSync(context, authManager, config);
+        await initializeSync(context, authManager, config, syncExcludes());
       }
     })
   );
@@ -95,7 +105,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }, null, 2));
 
         // Create .gitignore with exclude patterns
-        await ensureGitignore(destPath, config.sync.excludePatterns);
+        await ensureGitignore(destPath, syncExcludes());
 
         const openChoice = await vscode.window.showInformationMessage(
           'Overleaf Connect: Project cloned successfully!',
@@ -127,6 +137,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand('overleafconnect.pauseSync', () => {
+      buildSyncGate.release();
       syncManager?.pause();
       statusBar?.update(SyncState.Disabled);
       vscode.window.showInformationMessage('Overleaf Connect: Auto-sync paused.');
@@ -135,6 +146,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand('overleafconnect.resumeSync', () => {
+      buildSyncGate.release();
       syncManager?.resume();
       statusBar?.update(SyncState.Idle);
       vscode.window.showInformationMessage('Overleaf Connect: Auto-sync resumed.');
@@ -156,8 +168,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
-  // ---- LaTeX Features (only if LaTeX Workshop not present) ----
-  if (!hasLatexWorkshop) {
+  // ---- LaTeX Features ----
+  if (backend === 'overtex') {
+    context.subscriptions.push(
+      vscode.commands.registerCommand('overleafconnect.compile', () =>
+        vscode.commands.executeCommand('overtex.build')
+      ),
+      vscode.commands.registerCommand('overleafconnect.viewPdf', () =>
+        vscode.commands.executeCommand('overtex.viewPdf')
+      ),
+      vscode.commands.registerCommand('overleafconnect.syncTexForward', () =>
+        vscode.commands.executeCommand('overtex.forwardSearch')
+      ),
+      vscode.commands.registerCommand('overleafconnect.clean', () =>
+        vscode.commands.executeCommand('overtex.clean')
+      )
+    );
+
+    // Not awaited: sync must start even if Overtex is slow to activate or fails to.
+    void followOvertexBuilds(context, outputChannel);
+
+    outputChannel.appendLine('[Overleaf Connect] Overtex detected - deferring LaTeX features');
+  } else if (backend === 'builtin') {
     const compiler = new LaTeXCompiler(outputChannel);
     const logParser = new LogParser();
     const pdfPanel = new PdfPreviewPanel(context.extensionUri);
@@ -282,7 +314,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     outputChannel.appendLine('[Overleaf Connect] LaTeX Workshop detected - deferring LaTeX features');
   }
 
-  // ---- Sync on save (works regardless of LaTeX Workshop) ----
+  // The backend is fixed for this session, so installing or removing Overtex needs a reload.
+  let reloadOffered = false;
+  context.subscriptions.push(
+    vscode.extensions.onDidChange(() => {
+      const hasOvertex = !!vscode.extensions.getExtension(OVERTEX_ID);
+      if (reloadOffered || hasOvertex === (backend === 'overtex')) {
+        return;
+      }
+      reloadOffered = true;
+      void vscode.window
+        .showInformationMessage(
+          'Overleaf Connect: Reload the window to change which extension builds your LaTeX.',
+          'Reload Window'
+        )
+        .then((choice) => {
+          if (choice === 'Reload Window') {
+            void vscode.commands.executeCommand('workbench.action.reloadWindow');
+          }
+        });
+    })
+  );
+
+  // ---- Sync on save (works regardless of the LaTeX backend) ----
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(async (doc) => {
       if (syncManager && (doc.languageId === 'latex' || doc.fileName.endsWith('.bib'))) {
@@ -294,7 +348,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // ---- Initialize Sync if already configured ----
   if (await authManager.isAuthenticated() && vscode.workspace.workspaceFolders?.length) {
-    await initializeSync(context, authManager, config);
+    await initializeSync(context, authManager, config, syncExcludes());
   } else {
     statusBar.update(SyncState.NotConfigured);
   }
@@ -318,7 +372,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 async function initializeSync(
   context: vscode.ExtensionContext,
   authManager: AuthManager,
-  config: ReturnType<typeof getConfig>
+  config: ReturnType<typeof getConfig>,
+  excludePatterns: string[]
 ): Promise<void> {
   // Dispose previous sync instance if reconfiguring
   if (syncManager) {
@@ -348,7 +403,7 @@ async function initializeSync(
   }
 
   // Ensure .gitignore has exclude patterns
-  await ensureGitignore(workspacePath, config.sync.excludePatterns);
+  await ensureGitignore(workspacePath, excludePatterns);
 
   const fileWatcher = new FileWatcher(workspacePath);
   syncManager = new SyncManager(gitEngine, fileWatcher, config);
@@ -367,6 +422,31 @@ async function initializeSync(
   }
 
   context.subscriptions.push(gitEngine, fileWatcher, syncManager);
+}
+
+function excludePatternsFor(backend: LatexBackend, patterns: string[]): string[] {
+  return backend === 'overtex' ? [...patterns, ...OVERTEX_SYNC_EXCLUDES] : patterns;
+}
+
+/** Holds sync back during every Overtex build, including the ones it starts on save. */
+async function followOvertexBuilds(
+  context: vscode.ExtensionContext,
+  outputChannel: vscode.OutputChannel
+): Promise<void> {
+  try {
+    const api = await vscode.extensions.getExtension<OvertexBuildEvents>(OVERTEX_ID)?.activate();
+    if (!api?.onDidStartBuild || !api.onDidEndBuild) {
+      outputChannel.appendLine('[Overleaf Connect] This Overtex version has no build events; sync continues during builds');
+      return;
+    }
+    context.subscriptions.push(
+      api.onDidStartBuild(() => buildSyncGate.buildStarted()),
+      api.onDidEndBuild(() => void buildSyncGate.buildEnded())
+    );
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    outputChannel.appendLine(`[Overleaf Connect] Could not connect to Overtex: ${msg}`);
+  }
 }
 
 function getMainTexFile(config: ReturnType<typeof getConfig>): string | null {

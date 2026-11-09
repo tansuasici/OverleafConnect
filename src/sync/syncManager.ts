@@ -45,6 +45,10 @@ export class SyncManager implements vscode.Disposable {
     this.logger.info('Auto-sync stopped');
   }
 
+  get paused(): boolean {
+    return this.isPaused;
+  }
+
   pause(): void {
     this.isPaused = true;
     this.logger.info('Auto-sync paused');
