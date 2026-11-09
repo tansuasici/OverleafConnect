@@ -9,6 +9,7 @@ import { SyncManager } from './sync/syncManager';
 import { StatusBarManager } from './ui/statusBar';
 import { BuildSyncGate, OVERTEX_ID, OVERTEX_SYNC_EXCLUDES, OvertexBuildEvents } from './latex/overtex';
 import { SyncGroup } from './sync/syncGroup';
+import { SyncDecorationProvider, SyncTreeProvider } from './ui/syncView';
 import { writeMarker } from './auth/projectUrl';
 import { SyncState } from './types';
 import { getConfig } from './utils/config';
@@ -18,6 +19,29 @@ import { ensureGitignore } from './utils/gitignore';
 const syncs = new SyncGroup<SyncManager>();
 let statusBar: StatusBarManager | undefined;
 const buildSyncGate = new BuildSyncGate(() => (syncs.size ? syncs : undefined));
+let tree: SyncTreeProvider | undefined;
+let decorations: SyncDecorationProvider | undefined;
+
+/** The sync of the active editor's folder, else the first connected folder's. */
+function currentSync(): SyncManager | undefined {
+  const uri = vscode.window.activeTextEditor?.document.uri;
+  const folder = uri && vscode.workspace.getWorkspaceFolder(uri);
+  return (folder && syncs.get(folder.uri.fsPath)) ?? syncs.entries()[0]?.[1];
+}
+
+/** Brings the status bar, the panel and the menu context keys in line with the syncs. */
+function refreshViews(): void {
+  const sync = currentSync();
+  statusBar?.update(sync ? sync.getState() : SyncState.NotConfigured);
+  tree?.refresh();
+  void vscode.commands.executeCommand('setContext', 'overleafconnect.connected', syncs.size > 0);
+  void vscode.commands.executeCommand('setContext', 'overleafconnect.paused', syncs.paused);
+}
+
+/** The folder a panel row belongs to, or the current one when run from elsewhere. */
+function syncFor(node?: { folderPath?: string }): SyncManager | undefined {
+  return node?.folderPath ? syncs.get(node.folderPath) : currentSync();
+}
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const outputChannel = getOutputChannel();
@@ -29,6 +53,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Initialize status bar
   statusBar = new StatusBarManager();
   context.subscriptions.push(statusBar, syncs);
+
+  // Initialize the Overleaf panel and explorer badges
+  tree = new SyncTreeProvider(syncs);
+  decorations = new SyncDecorationProvider(syncs);
+  context.subscriptions.push(
+    tree,
+    decorations,
+    vscode.window.createTreeView('overleafconnect.syncView', { treeDataProvider: tree, showCollapseAll: true }),
+    vscode.window.registerFileDecorationProvider(decorations),
+    syncs.onDidChange(() => {
+      decorations?.prune();
+      refreshViews();
+    }),
+    vscode.window.onDidChangeActiveTextEditor(() => refreshViews())
+  );
 
   // Overtex (a dependency) builds and previews; its output must not be pushed to Overleaf.
   const syncExcludes = () => [...config.sync.excludePatterns, ...OVERTEX_SYNC_EXCLUDES];
@@ -127,7 +166,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('overleafconnect.pauseSync', () => {
       buildSyncGate.release();
       syncs.pause();
-      statusBar?.update(SyncState.Disabled);
+      refreshViews();
       vscode.window.showInformationMessage('Overleaf Connect: Auto-sync paused.');
     })
   );
@@ -136,7 +175,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('overleafconnect.resumeSync', () => {
       buildSyncGate.release();
       syncs.resume();
-      statusBar?.update(SyncState.Idle);
+      refreshViews();
       vscode.window.showInformationMessage('Overleaf Connect: Auto-sync resumed.');
     })
   );
@@ -145,7 +184,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('overleafconnect.logout', async () => {
       await authManager.deleteToken();
       syncs.clear();
-      statusBar?.update(SyncState.NotConfigured);
+      refreshViews();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('overleafconnect.syncFolder', async (node?: { folderPath?: string }) => {
+      await syncFor(node)?.syncNow();
+    }),
+    vscode.commands.registerCommand('overleafconnect.pauseFolder', (node?: { folderPath?: string }) => {
+      buildSyncGate.release();
+      syncFor(node)?.pause();
+      refreshViews();
+    }),
+    vscode.commands.registerCommand('overleafconnect.resumeFolder', (node?: { folderPath?: string }) => {
+      buildSyncGate.release();
+      syncFor(node)?.resume();
+      refreshViews();
+    }),
+    vscode.commands.registerCommand('overleafconnect.refreshView', async () => {
+      await Promise.all(syncs.entries().map(([, s]) => s.refreshSnapshot()));
     })
   );
 
@@ -177,9 +235,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await initializeSync(folder, authManager, config, syncExcludes());
     }
   }
-  if (!syncs.size) {
-    statusBar.update(SyncState.NotConfigured);
-  }
+  refreshViews();
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(async (e) => {
@@ -189,9 +245,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           await initializeSync(folder, authManager, config, syncExcludes());
         }
       }
-      if (!syncs.size) {
-        statusBar?.update(SyncState.NotConfigured);
-      }
+      refreshViews();
     })
   );
 
@@ -254,10 +308,14 @@ async function initializeSync(
   await ensureGitignore(workspacePath, excludePatterns);
 
   const fileWatcher = new FileWatcher(workspacePath);
-  const syncManager = new SyncManager(gitEngine, fileWatcher, config);
+  const syncManager = new SyncManager(gitEngine, fileWatcher, config, projectUrl);
+  syncManager.onDidChangeState(() => refreshViews());
+  syncManager.onDidChangeSnapshot((snapshot) => {
+    decorations?.update(workspacePath, snapshot);
+    tree?.refresh();
+  });
   syncs.set(workspacePath, syncManager);
-
-  syncManager.onDidChangeState((state) => statusBar!.update(state));
+  void syncManager.refreshSnapshot();
 
   if (config.sync.pullOnOpen) {
     await syncManager.syncNow();

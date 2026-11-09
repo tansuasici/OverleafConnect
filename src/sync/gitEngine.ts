@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import simpleGit, { SimpleGit, PullResult, StatusResult } from 'simple-git';
 import { GitEngineOptions } from '../types';
 import { buildAuthenticatedUrl } from '../auth/credentialHelper';
+import { LOG_FORMAT, parseLog, RemoteCommit } from '../ui/syncModel';
 
 export class GitEngine implements vscode.Disposable {
   private git: SimpleGit;
@@ -79,6 +80,11 @@ export class GitEngine implements vscode.Disposable {
     return this.git.status();
   }
 
+  /** Status listing each untracked file, not just its new folder. */
+  async statusAllFiles(): Promise<StatusResult> {
+    return this.git.status(['-uall']);
+  }
+
   async addAll(): Promise<void> {
     await this.git.add('-A');
   }
@@ -125,6 +131,27 @@ export class GitEngine implements vscode.Disposable {
   async getConflictedFiles(): Promise<string[]> {
     const st = await this.status();
     return st.conflicted;
+  }
+
+  /** The newest commits on the Overleaf branch as of the last fetch. */
+  async remoteLog(count: number): Promise<RemoteCommit[]> {
+    const branch = await this.getBranch();
+    try {
+      return parseLog(await this.git.raw(['log', `origin/${branch}`, `-n${count}`, `--format=${LOG_FORMAT}`]));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Files in local commits that Overleaf does not have yet (three dots: from the merge base, so Overleaf's own new commits are not counted). */
+  async unpushedFiles(): Promise<string[]> {
+    const branch = await this.getBranch();
+    try {
+      const out = await this.git.raw(['diff', '--name-only', `origin/${branch}...HEAD`]);
+      return out.split('\n').map((l) => l.trim()).filter(Boolean);
+    } catch {
+      return [];
+    }
   }
 
   getWorkspacePath(): string {

@@ -3,6 +3,7 @@ import { GitEngine } from './gitEngine';
 import { FileWatcher } from './fileWatcher';
 import { ConflictHandler } from './conflictHandler';
 import { SyncState, ExtensionConfig } from '../types';
+import { pendingFromStatus, RemoteCommit, SyncSnapshot } from '../ui/syncModel';
 import { Logger } from '../utils/logger';
 
 export class SyncManager implements vscode.Disposable {
@@ -19,12 +20,54 @@ export class SyncManager implements vscode.Disposable {
   private readonly _onStateChange = new vscode.EventEmitter<SyncState>();
   public readonly onDidChangeState = this._onStateChange.event;
 
+  private lastSyncAt: Date | undefined;
+  private lastError: string | undefined;
+  private pendingFiles: string[] = [];
+  private conflictedFiles: string[] = [];
+  private recentRemoteCommits: RemoteCommit[] = [];
+  private readonly _onSnapshotChange = new vscode.EventEmitter<SyncSnapshot>();
+  /** Fires after each sync and whenever local files change between syncs. */
+  public readonly onDidChangeSnapshot = this._onSnapshotChange.event;
+  private readonly watcherListener: vscode.Disposable;
+
   constructor(
     private gitEngine: GitEngine,
     private fileWatcher: FileWatcher,
-    private config: ExtensionConfig
+    private config: ExtensionConfig,
+    private readonly projectUrl = ''
   ) {
     this.conflictHandler = new ConflictHandler(gitEngine);
+    this.watcherListener = fileWatcher.onDidChangeDirty(() => {
+      if (!this.isSyncing) {
+        void this.refreshSnapshot();
+      }
+    });
+  }
+
+  get snapshot(): SyncSnapshot {
+    return {
+      state: this.state,
+      projectUrl: this.projectUrl,
+      lastSyncAt: this.lastSyncAt,
+      lastError: this.lastError,
+      pendingFiles: this.pendingFiles,
+      conflictedFiles: this.conflictedFiles,
+      recentRemoteCommits: this.recentRemoteCommits,
+    };
+  }
+
+  /** Re-reads pending and conflicted files and the newest Overleaf commits from git. */
+  async refreshSnapshot(): Promise<void> {
+    try {
+      const status = await this.gitEngine.statusAllFiles();
+      const unpushed = await this.gitEngine.unpushedFiles();
+      this.pendingFiles = pendingFromStatus([...status.files, ...unpushed.map((path) => ({ path }))]);
+      this.conflictedFiles = pendingFromStatus(status.conflicted.map((path) => ({ path })));
+      this.recentRemoteCommits = await this.gitEngine.remoteLog(5);
+    } catch {
+      // Not a repository any more, or git is busy: keep what was shown.
+    }
+    this._onSnapshotChange.fire(this.snapshot);
   }
 
   start(): void {
@@ -34,7 +77,9 @@ export class SyncManager implements vscode.Disposable {
     const intervalMs = this.config.sync.intervalSeconds * 1000;
     this.timer = setInterval(() => this.syncCycle(), intervalMs);
     this.logger.info(`Auto-sync started (every ${this.config.sync.intervalSeconds}s)`);
-    this.setState(SyncState.Idle);
+    if (!this.isPaused && this.state !== SyncState.Conflict) {
+      this.setState(SyncState.Idle);
+    }
   }
 
   stop(): void {
@@ -52,11 +97,17 @@ export class SyncManager implements vscode.Disposable {
   pause(): void {
     this.isPaused = true;
     this.logger.info('Auto-sync paused');
+    if (this.state !== SyncState.Conflict) {
+      this.setState(SyncState.Disabled);
+    }
   }
 
   resume(): void {
     this.isPaused = false;
     this.logger.info('Auto-sync resumed');
+    if (this.state === SyncState.Disabled) {
+      this.setState(SyncState.Idle);
+    }
   }
 
   async syncNow(): Promise<void> {
@@ -70,6 +121,13 @@ export class SyncManager implements vscode.Disposable {
   private setState(state: SyncState): void {
     this.state = state;
     this._onStateChange.fire(state);
+  }
+
+  private markSynced(): void {
+    this.consecutiveFailures = 0;
+    this.lastSyncAt = new Date();
+    this.lastError = undefined;
+    this.setState(SyncState.Idle);
   }
 
   private async syncCycle(): Promise<void> {
@@ -109,8 +167,7 @@ export class SyncManager implements vscode.Disposable {
       // Case A: No changes
       if (!localChanges && !remoteChanges) {
         this.logger.info('No changes detected');
-        this.setState(SyncState.Idle);
-        this.consecutiveFailures = 0;
+        this.markSynced();
         this.isSyncing = false;
         return;
       }
@@ -121,8 +178,7 @@ export class SyncManager implements vscode.Disposable {
         this.logger.info('Pulling remote changes...');
         await this.gitEngine.pull();
         this.logger.info('Pull complete');
-        this.setState(SyncState.Idle);
-        this.consecutiveFailures = 0;
+        this.markSynced();
         this.isSyncing = false;
         return;
       }
@@ -135,8 +191,7 @@ export class SyncManager implements vscode.Disposable {
         await this.gitEngine.push();
         this.fileWatcher.reset();
         this.logger.info('Push complete');
-        this.setState(SyncState.Idle);
-        this.consecutiveFailures = 0;
+        this.markSynced();
         this.isSyncing = false;
         return;
       }
@@ -153,8 +208,7 @@ export class SyncManager implements vscode.Disposable {
         await this.gitEngine.push();
         this.fileWatcher.reset();
         this.logger.info('Rebase and push complete');
-        this.setState(SyncState.Idle);
-        this.consecutiveFailures = 0;
+        this.markSynced();
       } catch {
         // Rebase failed, abort and try merge
         this.logger.warn('Rebase failed, attempting merge...');
@@ -170,8 +224,7 @@ export class SyncManager implements vscode.Disposable {
           await this.gitEngine.push();
           this.fileWatcher.reset();
           this.logger.info('Merge and push complete');
-          this.setState(SyncState.Idle);
-          this.consecutiveFailures = 0;
+          this.markSynced();
         } catch {
           // Merge has conflicts
           this.logger.error('Merge conflict detected');
@@ -184,6 +237,7 @@ export class SyncManager implements vscode.Disposable {
       this.consecutiveFailures++;
       const errMsg = error instanceof Error ? error.message : String(error);
       this.logger.error(`Sync failed: ${errMsg}`);
+      this.lastError = errMsg;
 
       if (this.isAuthError(errMsg)) {
         this.setState(SyncState.Error);
@@ -203,6 +257,7 @@ export class SyncManager implements vscode.Disposable {
       }
     } finally {
       this.isSyncing = false;
+      await this.refreshSnapshot();
     }
   }
 
@@ -240,6 +295,8 @@ export class SyncManager implements vscode.Disposable {
     this.gitEngine.dispose();
     this.fileWatcher.dispose();
     this._onStateChange.dispose();
+    this._onSnapshotChange.dispose();
+    this.watcherListener.dispose();
     this.conflictHandler.dispose();
     this.logger.dispose();
   }

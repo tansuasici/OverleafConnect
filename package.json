@@ -59,12 +59,14 @@
       {
         "command": "overleafconnect.pauseSync",
         "title": "Pause Auto-Sync",
-        "category": "Overleaf Connect"
+        "category": "Overleaf Connect",
+        "icon": "$(debug-pause)"
       },
       {
         "command": "overleafconnect.resumeSync",
         "title": "Resume Auto-Sync",
-        "category": "Overleaf Connect"
+        "category": "Overleaf Connect",
+        "icon": "$(debug-start)"
       },
       {
         "command": "overleafconnect.showLog",
@@ -75,6 +77,30 @@
         "command": "overleafconnect.logout",
         "title": "Clear Overleaf Credentials",
         "category": "Overleaf Connect"
+      },
+      {
+        "command": "overleafconnect.syncFolder",
+        "title": "Sync This Folder",
+        "category": "Overleaf Connect",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "overleafconnect.pauseFolder",
+        "title": "Pause This Folder",
+        "category": "Overleaf Connect",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "overleafconnect.resumeFolder",
+        "title": "Resume This Folder",
+        "category": "Overleaf Connect",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "overleafconnect.refreshView",
+        "title": "Refresh Overleaf Panel",
+        "category": "Overleaf Connect",
+        "icon": "$(refresh)"
       }
     ],
     "configuration": {
@@ -145,7 +171,109 @@
         "key": "ctrl+alt+s",
         "mac": "cmd+alt+s"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "overleafconnect",
+          "title": "Overleaf",
+          "icon": "media/icons/overleaf-sync.svg"
+        }
+      ]
+    },
+    "views": {
+      "overleafconnect": [
+        {
+          "id": "overleafconnect.syncView",
+          "name": "Sync",
+          "icon": "media/icons/overleaf-sync.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "overleafconnect.syncView",
+        "when": "!overleafconnect.connected",
+        "contents": "No folder is connected to an Overleaf project.\n[Connect This Folder](command:overleafconnect.configure)\n[Clone Overleaf Project](command:overleafconnect.cloneProject)"
+      }
+    ],
+    "colors": [
+      {
+        "id": "overleafconnect.pendingResourceForeground",
+        "description": "Explorer color for files that are not on Overleaf yet.",
+        "defaults": {
+          "dark": "#6CB6FF",
+          "light": "#0969DA",
+          "highContrast": "#6CB6FF",
+          "highContrastLight": "#0969DA"
+        }
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "overleafconnect.syncNow",
+          "when": "view == overleafconnect.syncView && overleafconnect.connected",
+          "group": "navigation@1"
+        },
+        {
+          "command": "overleafconnect.pauseSync",
+          "when": "view == overleafconnect.syncView && overleafconnect.connected && !overleafconnect.paused",
+          "group": "navigation@2"
+        },
+        {
+          "command": "overleafconnect.resumeSync",
+          "when": "view == overleafconnect.syncView && overleafconnect.paused",
+          "group": "navigation@2"
+        },
+        {
+          "command": "overleafconnect.refreshView",
+          "when": "view == overleafconnect.syncView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "overleafconnect.configure",
+          "when": "view == overleafconnect.syncView",
+          "group": "more@1"
+        },
+        {
+          "command": "overleafconnect.showLog",
+          "when": "view == overleafconnect.syncView",
+          "group": "more@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "overleafconnect.syncFolder",
+          "when": "view == overleafconnect.syncView && viewItem =~ /^overleafFolder/",
+          "group": "inline@1"
+        },
+        {
+          "command": "overleafconnect.pauseFolder",
+          "when": "view == overleafconnect.syncView && viewItem == overleafFolder",
+          "group": "inline@2"
+        },
+        {
+          "command": "overleafconnect.resumeFolder",
+          "when": "view == overleafconnect.syncView && viewItem == overleafFolder.paused",
+          "group": "inline@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "overleafconnect.syncFolder",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.pauseFolder",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.resumeFolder",
+          "when": "false"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

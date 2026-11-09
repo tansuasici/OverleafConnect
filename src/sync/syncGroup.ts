@@ -9,6 +9,17 @@ export interface FolderSync extends PausableSync {
 /** One sync per workspace folder that holds an Overleaf project, driven together. */
 export class SyncGroup<T extends FolderSync = FolderSync> implements PausableSync {
   private readonly syncs = new Map<string, T>();
+  private readonly listeners = new Set<() => void>();
+
+  /** Calls back when a folder is added or removed; returns a function that stops it. */
+  onDidChange(listener: () => void): { dispose(): void } {
+    this.listeners.add(listener);
+    return { dispose: () => this.listeners.delete(listener) };
+  }
+
+  private changed(): void {
+    this.listeners.forEach((l) => l());
+  }
 
   get size(): number {
     return this.syncs.size;
@@ -30,11 +41,16 @@ export class SyncGroup<T extends FolderSync = FolderSync> implements PausableSyn
   set(folderPath: string, sync: T): void {
     this.syncs.get(folderPath)?.dispose();
     this.syncs.set(folderPath, sync);
+    this.changed();
   }
 
   remove(folderPath: string): void {
-    this.syncs.get(folderPath)?.dispose();
-    this.syncs.delete(folderPath);
+    const sync = this.syncs.get(folderPath);
+    if (sync) {
+      sync.dispose();
+      this.syncs.delete(folderPath);
+      this.changed();
+    }
   }
 
   pause(): void {
@@ -61,10 +77,19 @@ export class SyncGroup<T extends FolderSync = FolderSync> implements PausableSyn
 
   clear(): void {
     this.syncs.forEach((s) => s.dispose());
+    const had = this.syncs.size > 0;
     this.syncs.clear();
+    if (had) {
+      this.changed();
+    }
   }
 
   dispose(): void {
     this.clear();
+    this.listeners.clear();
+  }
+
+  entries(): [string, T][] {
+    return [...this.syncs.entries()];
   }
 }
