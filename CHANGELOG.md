@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.8] - 2026-11-09
 
 ### Changed
 - When Overtex is installed, it handles compile, PDF preview, SyncTeX and clean, and Overleaf Connect handles only Git sync. If LaTeX Workshop is also installed, Overtex is the one used
