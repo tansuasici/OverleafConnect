@@ -14,7 +14,7 @@ suite('LogParser Test Suite', () => {
   });
 
   test('should parse LaTeX errors', () => {
-    const fixturesDir = path.resolve(__dirname, '../../test/fixtures');
+    const fixturesDir = path.resolve(__dirname, '../../../test/fixtures');
     const entries = logParser.parse(
       path.join(fixturesDir, 'sample-errors.log'),
       fixturesDir
@@ -29,7 +29,7 @@ suite('LogParser Test Suite', () => {
   });
 
   test('should parse LaTeX warnings', () => {
-    const fixturesDir = path.resolve(__dirname, '../../test/fixtures');
+    const fixturesDir = path.resolve(__dirname, '../../../test/fixtures');
     const entries = logParser.parse(
       path.join(fixturesDir, 'sample-warnings.log'),
       fixturesDir
@@ -45,7 +45,7 @@ suite('LogParser Test Suite', () => {
   });
 
   test('should parse clean log without errors', () => {
-    const fixturesDir = path.resolve(__dirname, '../../test/fixtures');
+    const fixturesDir = path.resolve(__dirname, '../../../test/fixtures');
     const entries = logParser.parse(
       path.join(fixturesDir, 'sample.log'),
       fixturesDir

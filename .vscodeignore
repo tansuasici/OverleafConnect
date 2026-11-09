@@ -8,3 +8,16 @@ webpack.config.js
 **/*.ts
 **/*.map
 .claude/**
+out/src/**
+out/test/**
+out/auth/**
+out/latex/**
+out/sync/**
+out/ui/**
+out/utils/**
+out/viewer/**
+out/types.js
+.github/**
+.vscode-test/**
+.gitignore
+*.vsix
