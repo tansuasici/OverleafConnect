@@ -43,7 +43,7 @@ Auto-sync starts immediately. Your Git token is kept in VS Code's secret storage
 
 ## Overleaf Web Features (optional)
 
-Run **Overleaf Connect: Set Overleaf Session Cookie** and paste the `overleaf_session2` cookie from your browser. Then:
+Run **Overleaf Connect: Set Overleaf Session Cookie** and paste the value of the `overleaf_session2` cookie from your browser (on a self-hosted server, paste it as `name=value`). Then:
 
 - **Clone Overleaf Project** lists your projects instead of asking for a URL
 - **Show Overleaf Comments** shows open comment threads on the lines they refer to (read-only)

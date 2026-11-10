@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.1] - 2026-11-10
+
+### Changed
+- On overleaf.com, Set Overleaf Session Cookie takes the bare value of the `overleaf_session2` cookie; `name=value` still works, and a self-hosted server still asks for `name=value`
+
 ## [0.2.0] - 2026-11-10
 
 ### Added
