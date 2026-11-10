@@ -15,7 +15,7 @@ export async function webClient(authManager: AuthManager, gitOrServerUrl: string
   if (!origin) {
     return undefined;
   }
-  const cookie = (await authManager.getSessionCookie()) ?? (ask ? await authManager.promptForSessionCookie() : undefined);
+  const cookie = (await authManager.getSessionCookie()) ?? (ask ? await authManager.promptForSessionCookie(gitOrServerUrl) : undefined);
   return cookie ? new OverleafWebClient(origin, cookie) : undefined;
 }
 

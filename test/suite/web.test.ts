@@ -5,6 +5,7 @@ import {
   CSRF_HEADER,
   locateQuote,
   normalizeCookie,
+  sessionCookieName,
   parseCompile,
   parseCsrf,
   parseProjects,
@@ -23,6 +24,20 @@ suite('webModel', () => {
     assert.strictEqual(normalizeCookie('justavalue'), undefined);
     assert.strictEqual(normalizeCookie('a=b c'), undefined);
     assert.strictEqual(normalizeCookie(''), undefined);
+  });
+
+  test('normalizeCookie names a bare value only when the name is known', () => {
+    assert.strictEqual(normalizeCookie(' s%3Aabc ', 'overleaf_session2'), 'overleaf_session2=s%3Aabc');
+    assert.strictEqual(normalizeCookie('a=b', 'overleaf_session2'), 'a=b');
+    assert.strictEqual(normalizeCookie('a b', 'overleaf_session2'), undefined);
+    assert.strictEqual(normalizeCookie('', 'overleaf_session2'), undefined);
+  });
+
+  test('sessionCookieName knows overleaf.com only', () => {
+    assert.strictEqual(sessionCookieName(webOrigin('https://git.overleaf.com')), 'overleaf_session2');
+    assert.strictEqual(sessionCookieName('https://www.overleaf.com'), 'overleaf_session2');
+    assert.strictEqual(sessionCookieName('https://latex.example.org'), undefined);
+    assert.strictEqual(sessionCookieName(undefined), undefined);
   });
 
   test('parseCsrf reads the meta tag in either attribute order', () => {

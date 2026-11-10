@@ -19,11 +19,24 @@ export const CSRF_HEADER = 'X-Csrf-Token';
 
 /**
  * The pasted session cookie as a Cookie header value: "name=value", with any "Cookie:" prefix dropped.
- * The whole pair is kept because the cookie's name differs between overleaf.com and self-hosted servers.
+ * The whole pair is kept because the cookie's name differs between overleaf.com and self-hosted servers; a bare
+ * value is taken as `defaultName`'s when one is known (see sessionCookieName).
  */
-export function normalizeCookie(input: string): string | undefined {
+export function normalizeCookie(input: string, defaultName?: string): string | undefined {
   const value = input.trim().replace(/^cookie:\s*/i, '').trim();
+  if (defaultName && /^[^=;\s]+$/.test(value)) {
+    return `${defaultName}=${value}`;
+  }
   return /^[^=;\s]+=[^;\s]+(;\s*[^=;\s]+=[^;\s]*)*;?$/.test(value) ? value.replace(/;$/, '') : undefined;
+}
+
+/** The session cookie's name on a server whose web origin is `origin`, when it is known (overleaf.com only). */
+export function sessionCookieName(origin: string | undefined): string | undefined {
+  try {
+    return origin && new URL(origin).hostname.toLowerCase() === 'www.overleaf.com' ? 'overleaf_session2' : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The token in the project page's `<meta name="ol-csrfToken" content="...">`. */

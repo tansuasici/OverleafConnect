@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import simpleGit from 'simple-git';
 import { getConfig } from '../utils/config';
-import { pickProjectUrl, readMarker, resolveProjectUrl, writeMarker } from './projectUrl';
-import { normalizeCookie } from '../web/webModel';
+import { pickProjectUrl, readMarker, resolveProjectUrl, webOrigin, writeMarker } from './projectUrl';
+import { normalizeCookie, sessionCookieName } from '../web/webModel';
 
 const SECRET_KEY_TOKEN = 'overleafconnect.overleaf.token';
 /** The browser session cookie ("name=value") for the web features; never logged or shown. */
@@ -40,18 +40,23 @@ export class AuthManager implements vscode.Disposable {
     await this.secretStorage.delete(SECRET_KEY_SESSION_COOKIE);
   }
 
-  /** Asks for the session cookie in a password box and stores it; undefined when cancelled. */
-  async promptForSessionCookie(): Promise<string | undefined> {
+  /**
+   * Asks for the session cookie in a password box and stores it; undefined when cancelled. On overleaf.com the
+   * bare value is enough; elsewhere the cookie's name is not known, so it is pasted as name=value.
+   */
+  async promptForSessionCookie(gitOrServerUrl: string = getConfig().overleaf.serverUrl): Promise<string | undefined> {
+    const name = sessionCookieName(webOrigin(gitOrServerUrl));
     const input = await vscode.window.showInputBox({
       title: 'Overleaf Connect: Overleaf Session Cookie',
-      prompt:
-        'For the project list, comments and compiling on Overleaf. In your browser, signed in to Overleaf, copy the session cookie as name=value (on overleaf.com it is overleaf_session2).',
-      placeHolder: 'overleaf_session2=...',
+      prompt: name
+        ? `For the project list, comments and compiling on Overleaf. In your browser, signed in to Overleaf, copy the value of the ${name} cookie.`
+        : 'For the project list, comments and compiling on Overleaf. In your browser, signed in to Overleaf, copy the session cookie as name=value.',
+      placeHolder: name ? 'Cookie value (or name=value)' : 'name=value',
       password: true,
       ignoreFocusOut: true,
-      validateInput: (v) => (normalizeCookie(v) ? null : 'Paste the cookie as name=value'),
+      validateInput: (v) => (normalizeCookie(v, name) ? null : name ? 'Paste the cookie value' : 'Paste the cookie as name=value'),
     });
-    const cookie = input && normalizeCookie(input);
+    const cookie = input && normalizeCookie(input, name);
     if (!cookie) {
       return undefined;
     }
