@@ -180,6 +180,12 @@
         "icon": "$(reply)"
       },
       {
+        "command": "overleafconnect.comments.create",
+        "title": "Add Comment",
+        "category": "Overleaf Connect",
+        "icon": "$(comment)"
+      },
+      {
         "command": "overleafconnect.comments.resolve",
         "title": "Resolve",
         "category": "Overleaf Connect",
@@ -492,6 +498,10 @@
           "when": "false"
         },
         {
+          "command": "overleafconnect.comments.create",
+          "when": "false"
+        },
+        {
           "command": "overleafconnect.comments.resolve",
           "when": "false"
         },
@@ -525,6 +535,11 @@
           "command": "overleafconnect.comments.reply",
           "group": "inline",
           "when": "commentController == overleafconnect.comments && !commentThreadIsEmpty"
+        },
+        {
+          "command": "overleafconnect.comments.create",
+          "group": "inline",
+          "when": "commentController == overleafconnect.comments && commentThreadIsEmpty"
         }
       ],
       "comments/commentThread/title": [
@@ -582,23 +597,25 @@
     "test": "node ./out/test/runTest.js"
   },
   "dependencies": {
-    "simple-git": "^3.22.0"
+    "simple-git": "^3.22.0",
+    "ws": "^8.22.2"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
-    "@types/node": "^20.0.0",
     "@types/mocha": "^10.0.0",
+    "@types/node": "^20.0.0",
+    "@types/sinon": "^17.0.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.18.2",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
     "@vscode/test-electron": "^2.3.0",
     "@vscode/vsce": "^2.22.0",
-    "typescript": "^5.3.0",
+    "eslint": "^8.56.0",
     "mocha": "^10.2.0",
     "sinon": "^17.0.0",
-    "@types/sinon": "^17.0.0",
-    "webpack": "^5.89.0",
-    "webpack-cli": "^5.1.0",
     "ts-loader": "^9.5.0",
-    "eslint": "^8.56.0",
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.0.0"
+    "typescript": "^5.3.0",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.0"
   }
 }

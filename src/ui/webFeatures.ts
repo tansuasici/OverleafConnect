@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AuthManager } from '../auth/authManager';
 import { projectIdFromUrl, webOrigin } from '../auth/projectUrl';
-import { OverleafWebClient, WebError } from '../web/overleafWeb';
+import { CommentPlacementError, OverleafWebClient, WebError } from '../web/overleafWeb';
 import { describeCompileStatus, locateQuote, WebProject } from '../web/webModel';
 import { SyncManager } from '../sync/syncManager';
 import { SyncState } from '../types';
@@ -184,19 +184,26 @@ class OverleafMessage implements vscode.Comment {
 /**
  * Overleaf's comment threads on the lines they are about. Replies, edits and deletions of the user's own messages,
  * resolving, reopening and deleting threads go to Overleaf, then the folder's threads are fetched again, so what VS
- * Code shows is what Overleaf accepted. New comments are made on Overleaf: they are edits to the document there.
+ * Code shows is what Overleaf accepted. A new comment goes on the selected text (or the line) in a connected folder.
  */
 export class OverleafComments implements vscode.Disposable {
   private readonly controller = vscode.comments.createCommentController('overleafconnect.comments', 'Overleaf Comments');
   private readonly threads = new Map<string, vscode.CommentThread[]>();
   private readonly refs = new WeakMap<vscode.CommentThread, ThreadRef>();
   private readonly disposables: vscode.Disposable[] = [];
+  /** Workspace folders known to be connected to an Overleaf project. */
+  private readonly connected = new Map<string, Promise<boolean>>();
 
   constructor(private readonly authManager: AuthManager) {
-    this.controller.options = { prompt: 'Reply on Overleaf', placeHolder: 'Reply on Overleaf' };
+    this.controller.options = { prompt: 'Comment on Overleaf', placeHolder: 'Comment on Overleaf' };
+    this.controller.commentingRangeProvider = {
+      provideCommentingRanges: async (doc) =>
+        doc.uri.scheme === 'file' && (await this.folderFor(doc.uri)) ? [new vscode.Range(0, 0, doc.lineCount - 1, doc.lineAt(doc.lineCount - 1).text.length)] : [],
+    };
     const command = <A extends unknown[]>(id: string, run: (...args: A) => Promise<void> | void) =>
       this.disposables.push(vscode.commands.registerCommand(`overleafconnect.comments.${id}`, run));
     command('reply', (reply: vscode.CommentReply) => this.reply(reply));
+    command('create', (reply: vscode.CommentReply) => this.create(reply));
     command('resolve', (thread: vscode.CommentThread) => this.threadAction(thread, 'Resolving the comment', (c, r) => c.resolveThread(r.projectId, r.docId!, r.threadId)));
     command('reopen', (thread: vscode.CommentThread) => this.threadAction(thread, 'Reopening the comment', (c, r) => c.reopenThread(r.projectId, r.docId!, r.threadId)));
     command('deleteThread', (thread: vscode.CommentThread) => this.deleteThread(thread));
@@ -291,6 +298,72 @@ export class OverleafComments implements vscode.Disposable {
     if (text) {
       await this.run(this.refs.get(reply.thread), 'Replying', (c, r) => c.reply(r.projectId, r.threadId, text));
     }
+  }
+
+  /** The connected workspace folder `uri` is in, if any. */
+  private async folderFor(uri: vscode.Uri): Promise<string | undefined> {
+    const folder = vscode.workspace.getWorkspaceFolder(uri)?.uri.fsPath;
+    if (!folder) {
+      return undefined;
+    }
+    let known = this.connected.get(folder);
+    if (!known) {
+      known = this.authManager.getProjectUrl(folder).then((u) => !!u && !!projectIdFromUrl(u), () => false);
+      this.connected.set(folder, known);
+    }
+    if (await known) {
+      return folder;
+    }
+    this.connected.delete(folder); // Ask again next time: the folder may get connected later.
+    return undefined;
+  }
+
+  /** Starts a thread on Overleaf on the new thread's text: the selection, or its line without surrounding spaces. */
+  private async create(reply: vscode.CommentReply): Promise<void> {
+    const thread = reply.thread;
+    const content = reply.text.trim();
+    const folderPath = await this.folderFor(thread.uri);
+    if (!content || !folderPath) {
+      return;
+    }
+    const doc = await vscode.workspace.openTextDocument(thread.uri);
+    let range = thread.range ?? doc.lineAt(0).range;
+    if (range.isEmpty) {
+      range = doc.lineAt(range.start.line).range;
+    }
+    const raw = doc.getText(range);
+    const start = doc.offsetAt(range.start) + (raw.length - raw.trimStart().length);
+    const end = Math.max(start, doc.offsetAt(range.end) - (raw.length - raw.trimEnd().length));
+    const quote = doc.getText(new vscode.Range(doc.positionAt(start), doc.positionAt(end))).replace(/\r/g, '');
+    if (!quote) {
+      vscode.window.showWarningMessage('Overleaf Connect: Select the text to comment on; this line is empty.');
+      return;
+    }
+    const near = doc.getText(new vscode.Range(new vscode.Position(0, 0), doc.positionAt(start))).replace(/\r/g, '').length;
+    const relPath = path.relative(folderPath, thread.uri.fsPath).split(path.sep).join('/');
+    const projectUrl = await this.authManager.getProjectUrl(folderPath);
+    const projectId = projectUrl && projectIdFromUrl(projectUrl);
+    const client = projectUrl && projectId && (await webClient(this.authManager, projectUrl));
+    if (!client || !projectId) {
+      return;
+    }
+    try {
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Overleaf: Adding the comment...' }, () =>
+        client.addComment(projectId, relPath, quote, near, content)
+      );
+    } catch (error) {
+      if (error instanceof CommentPlacementError) {
+        const choice = await vscode.window.showWarningMessage(`Overleaf Connect: ${error.message}`, 'Sync Now');
+        if (choice === 'Sync Now') {
+          await vscode.commands.executeCommand('overleafconnect.syncNow');
+        }
+      } else {
+        await reportWebError(this.authManager, 'Adding the comment', error);
+      }
+      return;
+    }
+    thread.dispose();
+    await this.show(this.authManager, folderPath, true);
   }
 
   private async threadAction(thread: vscode.CommentThread, what: string, change: (client: OverleafWebClient, ref: ThreadRef) => Promise<void>): Promise<void> {

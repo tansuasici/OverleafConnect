@@ -13,6 +13,9 @@ const config = {
   },
   externals: {
     vscode: 'commonjs vscode',
+    // Optional speed-ups the ws package tries to load; it works without them.
+    bufferutil: 'commonjs bufferutil',
+    'utf-8-validate': 'commonjs utf-8-validate',
   },
   resolve: {
     extensions: ['.ts', '.js'],

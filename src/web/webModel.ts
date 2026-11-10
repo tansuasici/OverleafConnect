@@ -249,3 +249,109 @@ export function locateQuote(text: string, quote: string, offset: number): number
   }
   return best;
 }
+
+// ---- Overleaf's real-time service (socket.io 0.9), used only to add a comment: a comment's highlight is an edit to
+// the document, which Overleaf accepts over this connection and over no HTTP route.
+
+/** The handshake that opens a real-time session for one project. */
+export const REALTIME_ENDPOINTS = {
+  handshake: (projectId: string, now: number) => `/socket.io/1/?t=${now}&projectId=${projectId}`,
+  websocket: (sessionId: string, projectId: string) => `/socket.io/1/websocket/${sessionId}?projectId=${projectId}`,
+};
+
+/** The session id from a handshake answer "sid:heartbeat:close:transports", when websocket is offered. */
+export function parseHandshake(body: string): string | undefined {
+  const [sid, , , transports] = body.trim().split(':');
+  return sid && /^[\w-]+$/.test(sid) && (transports ?? '').split(',').includes('websocket') ? sid : undefined;
+}
+
+/** One socket.io 0.9 frame, as far as this extension reads them. */
+export type RealtimeFrame =
+  | { kind: 'connect' }
+  | { kind: 'disconnect' }
+  | { kind: 'heartbeat' }
+  | { kind: 'event'; name: string; args: unknown[] }
+  | { kind: 'ack'; id: number; args: unknown[] }
+  | { kind: 'error'; reason: string }
+  | { kind: 'other' };
+
+export function parseFrame(frame: string): RealtimeFrame {
+  const m = frame.match(/^(\d):([^:]*):([^:]*):?([\s\S]*)$/);
+  if (!m) {
+    return { kind: 'other' };
+  }
+  const [, type, , , data] = m;
+  try {
+    switch (type) {
+      case '0':
+        return { kind: 'disconnect' };
+      case '1':
+        return { kind: 'connect' };
+      case '2':
+        return { kind: 'heartbeat' };
+      case '5': {
+        const e = JSON.parse(data) as { name?: unknown; args?: unknown };
+        return typeof e?.name === 'string' ? { kind: 'event', name: e.name, args: Array.isArray(e.args) ? e.args : [] } : { kind: 'other' };
+      }
+      case '6': {
+        const a = data.match(/^(\d+)\+?([\s\S]*)$/);
+        if (!a) {
+          return { kind: 'other' };
+        }
+        const args = a[2] ? JSON.parse(a[2]) : [];
+        return { kind: 'ack', id: Number(a[1]), args: Array.isArray(args) ? args : [] };
+      }
+      case '7':
+        return { kind: 'error', reason: data };
+      default:
+        return { kind: 'other' };
+    }
+  } catch {
+    return { kind: 'other' };
+  }
+}
+
+/** An event that asks for an acknowledgement with data, numbered `id`. */
+export function eventFrame(id: number, name: string, args: unknown[]): string {
+  return `5:${id}+::${JSON.stringify({ name, args })}`;
+}
+
+export const HEARTBEAT_FRAME = '2::';
+export const DISCONNECT_FRAME = '0::';
+
+/** A document line from joinDoc, which Overleaf sends as UTF-8 bytes in a binary string. */
+export function decodeDocLine(line: string): string {
+  return Buffer.from(line, 'latin1').toString('utf8');
+}
+
+/** The id of the editable document at `relPath` ("chapters/intro.tex") in joinProject's project tree. */
+export function findDocId(project: unknown, relPath: string): string | undefined {
+  type Folder = { name?: unknown; docs?: { _id?: unknown; name?: unknown }[]; folders?: Folder[] };
+  const roots = (project as { rootFolder?: unknown })?.rootFolder;
+  let folder: Folder | undefined = Array.isArray(roots) ? roots[0] : undefined;
+  const parts = relPath.split('/').filter(Boolean);
+  const name = parts.pop();
+  for (const part of parts) {
+    folder = Array.isArray(folder?.folders) ? folder.folders.find((f) => f?.name === part) : undefined;
+  }
+  const doc = Array.isArray(folder?.docs) ? folder.docs.find((d) => d?.name === name) : undefined;
+  return typeof doc?._id === 'string' && isWebId(doc._id) ? doc._id : undefined;
+}
+
+/** A new thread id in Overleaf's form: a 24-hex ObjectId that starts with the time in seconds. */
+export function newThreadId(now = Date.now(), random: () => number = Math.random): string {
+  const hex = (n: number, width: number) => Math.floor(n).toString(16).padStart(width, '0').slice(-width);
+  return hex(now / 1000, 8) + hex(random() * 0xffffff, 6) + hex(random() * 0x7fff, 4) + '000001';
+}
+
+/** The message an error acknowledgement carries, which Overleaf sends as a string or an object with a message. */
+export function ackError(value: unknown): string | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  const message = (value as { message?: unknown })?.message;
+  return typeof message === 'string' ? message : JSON.stringify(value);
+}

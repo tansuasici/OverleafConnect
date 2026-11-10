@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- New Overleaf comments from VS Code: select text in a connected folder, click the + in the gutter and Add Comment. The comment is placed on the same text in Overleaf's copy of the file
+
 ## [0.2.2] - 2026-11-10
 
 ### Added

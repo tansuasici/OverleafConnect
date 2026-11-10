@@ -1,9 +1,17 @@
 import * as assert from 'assert';
 import { webOrigin } from '../../src/auth/projectUrl';
-import { FetchFn, OverleafWebClient, WebError } from '../../src/web/overleafWeb';
+import { CommentPlacementError, FetchFn, OverleafWebClient, WebError } from '../../src/web/overleafWeb';
+import { RealtimeConnection, RealtimeError, RealtimeSocket, SocketFactory } from '../../src/web/realtime';
 import {
+  ackError,
   CSRF_HEADER,
+  decodeDocLine,
+  eventFrame,
+  findDocId,
   locateQuote,
+  newThreadId,
+  parseFrame,
+  parseHandshake,
   normalizeCookie,
   sessionCookieName,
   parseCompile,
@@ -258,5 +266,253 @@ suite('OverleafWebClient', () => {
     const client = new OverleafWebClient(ORIGIN, COOKIE, fetchFn);
     await assert.rejects(client.deleteMessage(ID, T, '../../user/delete'));
     assert.ok(calls.every((c) => c.method === 'GET'));
+  });
+});
+
+suite('realtime protocol', () => {
+  test('parseHandshake takes the session id only when websocket is offered', () => {
+    assert.strictEqual(parseHandshake('abc-123:60:60:websocket,xhr-polling'), 'abc-123');
+    assert.strictEqual(parseHandshake('abc:60:60:xhr-polling'), undefined);
+    assert.strictEqual(parseHandshake('<html>'), undefined);
+    assert.strictEqual(parseHandshake(''), undefined);
+  });
+
+  test('parseFrame reads events, acks, heartbeats and errors', () => {
+    assert.deepStrictEqual(parseFrame('2::'), { kind: 'heartbeat' });
+    assert.deepStrictEqual(parseFrame('0::'), { kind: 'disconnect' });
+    assert.deepStrictEqual(parseFrame('5:::{"name":"joinProjectResponse","args":[{"a":1}]}'), { kind: 'event', name: 'joinProjectResponse', args: [{ a: 1 }] });
+    assert.deepStrictEqual(parseFrame('6:::3+[null,["x"],7]'), { kind: 'ack', id: 3, args: [null, ['x'], 7] });
+    assert.deepStrictEqual(parseFrame('7:::1+0'), { kind: 'error', reason: '1+0' });
+    assert.deepStrictEqual(parseFrame('5:::not json'), { kind: 'other' });
+    assert.deepStrictEqual(parseFrame('garbage'), { kind: 'other' });
+  });
+
+  test('eventFrame asks for an acknowledgement with data', () => {
+    assert.strictEqual(eventFrame(4, 'joinDoc', ['d', { encodeRanges: true }]), '5:4+::{"name":"joinDoc","args":["d",{"encodeRanges":true}]}');
+  });
+
+  test('decodeDocLine turns UTF-8 bytes back into text', () => {
+    const encoded = Buffer.from('Çalışma – ğ', 'utf8').toString('latin1');
+    assert.strictEqual(decodeDocLine(encoded), 'Çalışma – ğ');
+    assert.strictEqual(decodeDocLine('plain'), 'plain');
+  });
+
+  test('findDocId walks folders and ignores files that are not documents', () => {
+    const D1 = 'aaaaaaaaaaaaaaaaaaaaaaaa';
+    const D2 = 'bbbbbbbbbbbbbbbbbbbbbbbb';
+    const project = {
+      rootFolder: [{ name: 'rootFolder', docs: [{ _id: D1, name: 'main.tex' }], fileRefs: [{ _id: ID, name: 'fig.png' }], folders: [{ name: 'chapters', docs: [{ _id: D2, name: 'intro.tex' }], folders: [] }] }],
+    };
+    assert.strictEqual(findDocId(project, 'main.tex'), D1);
+    assert.strictEqual(findDocId(project, 'chapters/intro.tex'), D2);
+    assert.strictEqual(findDocId(project, 'fig.png'), undefined);
+    assert.strictEqual(findDocId(project, 'other/intro.tex'), undefined);
+    assert.strictEqual(findDocId(undefined, 'main.tex'), undefined);
+  });
+
+  test('newThreadId is a 24-hex id that starts with the time', () => {
+    const id = newThreadId(0x5f000000 * 1000, () => 0.5);
+    assert.match(id, /^[0-9a-f]{24}$/);
+    assert.ok(id.startsWith('5f000000'));
+    assert.ok(id.endsWith('000001'));
+    assert.match(newThreadId(), /^[0-9a-f]{24}$/);
+  });
+
+  test('ackError reads strings, messages and nothing', () => {
+    assert.strictEqual(ackError(null), undefined);
+    assert.strictEqual(ackError('boom'), 'boom');
+    assert.strictEqual(ackError({ message: 'bad' }), 'bad');
+    assert.strictEqual(ackError({ code: 1 }), '{"code":1}');
+  });
+});
+
+/** A socket that records what is sent and answers each event through `answer`. */
+class FakeSocket implements RealtimeSocket {
+  readonly sent: string[] = [];
+  closed = false;
+  private listener?: (data: string) => void;
+  private closeListener?: (error?: Error) => void;
+
+  constructor(private readonly answer: (name: string, args: unknown[]) => unknown[] | undefined = () => [null]) {}
+
+  send(data: string): void {
+    this.sent.push(data);
+    const m = data.match(/^5:(\d+)\+::([\s\S]*)$/);
+    if (m) {
+      const { name, args } = JSON.parse(m[2]) as { name: string; args: unknown[] };
+      const reply = this.answer(name, args);
+      if (reply) {
+        setImmediate(() => this.push(`6:::${m[1]}+${JSON.stringify(reply)}`));
+      }
+    }
+  }
+  close(): void {
+    this.closed = true;
+  }
+  onMessage(listener: (data: string) => void): void {
+    this.listener = listener;
+  }
+  onClose(listener: (error?: Error) => void): void {
+    this.closeListener = listener;
+  }
+  push(frame: string): void {
+    this.listener?.(frame);
+  }
+  drop(): void {
+    this.closeListener?.();
+  }
+}
+
+suite('RealtimeConnection', () => {
+  test('echoes heartbeats and keeps the project from joinProjectResponse', async () => {
+    const socket = new FakeSocket();
+    const connection = new RealtimeConnection(socket, 200);
+    socket.push('2::');
+    assert.deepStrictEqual(socket.sent, ['2::']);
+    socket.push('5:::{"name":"joinProjectResponse","args":[{"project":{"name":"P"}}]}');
+    assert.deepStrictEqual(await connection.project(), { name: 'P' });
+  });
+
+  test('waits for the project when it comes later', async () => {
+    const socket = new FakeSocket();
+    const connection = new RealtimeConnection(socket, 200);
+    const project = connection.project();
+    socket.push('5:::{"name":"joinProjectResponse","args":[{"project":{"name":"Q"}}]}');
+    assert.deepStrictEqual(await project, { name: 'Q' });
+  });
+
+  test('call resolves with the acknowledgement after the error slot', async () => {
+    const socket = new FakeSocket(() => [null, ['line'], 3]);
+    const connection = new RealtimeConnection(socket, 200);
+    assert.deepStrictEqual(await connection.call('joinDoc', ['d']), [['line'], 3]);
+  });
+
+  test('call rejects with the error an acknowledgement carries', async () => {
+    const socket = new FakeSocket(() => [{ message: 'not allowed' }]);
+    const connection = new RealtimeConnection(socket, 200);
+    await assert.rejects(connection.call('joinDoc', ['d']), (e: unknown) => e instanceof RealtimeError && e.message === 'not allowed');
+  });
+
+  test('a rejected connection fails what is waiting', async () => {
+    const socket = new FakeSocket(() => undefined);
+    const connection = new RealtimeConnection(socket, 200);
+    const pending = connection.call('joinDoc', ['d']);
+    socket.push('5:::{"name":"connectionRejected","args":[{"message":"no access"}]}');
+    await assert.rejects(pending, /no access/);
+    await assert.rejects(connection.project(), /no access/);
+  });
+
+  test('times out when Overleaf does not answer, and a dropped socket fails calls', async () => {
+    const quiet = new RealtimeConnection(new FakeSocket(() => undefined), 20);
+    await assert.rejects(quiet.call('joinDoc', ['d']), /did not answer in time/);
+    const socket = new FakeSocket(() => undefined);
+    const dropped = new RealtimeConnection(socket, 200);
+    const pending = dropped.call('joinDoc', ['d']);
+    socket.drop();
+    await assert.rejects(pending, /closed/);
+  });
+
+  test('close says goodbye and closes the socket', () => {
+    const socket = new FakeSocket();
+    new RealtimeConnection(socket, 200).close();
+    assert.deepStrictEqual(socket.sent, ['0::']);
+    assert.ok(socket.closed);
+  });
+});
+
+suite('OverleafWebClient.addComment', () => {
+  const DOC = 'cccccccccccccccccccccccc';
+  const PROJECT = { rootFolder: [{ name: 'rootFolder', docs: [{ _id: DOC, name: 'main.tex' }], folders: [] }] };
+  const LINES = ['\\section{Giriş}', 'Hello world, hello again.'].map((l) => Buffer.from(l, 'utf8').toString('latin1'));
+
+  type Setup = { joinDoc?: unknown[]; project?: unknown; afterUpdate?: string[] };
+  function setup(opts: Setup = {}) {
+    const calls: (Call & { order: number })[] = [];
+    const sockets: { url: string; headers: Record<string, string>; socket: FakeSocket }[] = [];
+    const events: string[] = [];
+    const applied: string[] = [];
+    let order = 0;
+    const fetchFn: FetchFn = async (url, init) => {
+      calls.push({ url, ...init, order: order++ });
+      events.push(`${init.method} ${new URL(url).pathname}`);
+      const handshake = url.includes('/socket.io/1/?');
+      const body = handshake ? 'sid-1:60:60:websocket,xhr-polling' : url.endsWith('/project/' + ID) ? '<meta name="ol-csrfToken" content="tok">' : '';
+      return {
+        status: 200,
+        ok: true,
+        text: async () => body,
+        arrayBuffer: async () => new ArrayBuffer(0),
+        headers: { get: () => null, getSetCookie: () => (handshake ? ['GCLB=affinity; Path=/; HttpOnly', 'overleaf_session2=other; Path=/'] : []) },
+      };
+    };
+    const socketFactory: SocketFactory = async (url, headers) => {
+      const socket = new FakeSocket((name) => {
+        events.push(`ws ${name}`);
+        if (name === 'joinDoc') {
+          return opts.joinDoc ?? [null, LINES, 42, [], {}, 'sharejs-text-ot'];
+        }
+        if (name === 'applyOtUpdate') {
+          const after = opts.afterUpdate ?? [`5:::${JSON.stringify({ name: 'otUpdateApplied', args: [{ v: 42, doc: DOC }] })}`];
+          after.forEach((frame, i) => setTimeout(() => (applied.push(frame), socket.push(frame)), 5 * (i + 1)));
+        }
+        return [null];
+      });
+      sockets.push({ url, headers, socket });
+      setImmediate(() => socket.push(`5:::${JSON.stringify({ name: 'joinProjectResponse', args: [{ project: opts.project ?? PROJECT }] })}`));
+      return socket;
+    };
+    const client = new OverleafWebClient(ORIGIN, COOKIE, fetchFn, socketFactory);
+    return { client, calls, sockets, events, applied };
+  }
+
+  test('posts the first message, then marks the quote in the document', async () => {
+    const { client, calls, sockets, events } = setup();
+    await client.addComment(ID, 'main.tex', 'hello', 40, 'Check this');
+    assert.strictEqual(sockets.length, 1);
+    assert.strictEqual(sockets[0].url, `wss://www.overleaf.com/socket.io/1/websocket/sid-1?projectId=${ID}`);
+    assert.strictEqual(sockets[0].headers.Origin, ORIGIN);
+    assert.strictEqual(sockets[0].headers.Cookie, `${COOKIE}; GCLB=affinity`);
+    calls.forEach((c) => assert.ok(c.url.startsWith(ORIGIN + '/')));
+    const post = calls.find((c) => c.method === 'POST');
+    assert.ok(post);
+    assert.match(post.url, new RegExp(`/project/${ID}/thread/[0-9a-f]{24}/messages$`));
+    assert.deepStrictEqual(JSON.parse(post.body!), { content: 'Check this' });
+    const threadId = post.url.match(/thread\/([0-9a-f]{24})/)![1];
+    const sent = sockets[0].socket.sent.filter((f) => f.startsWith('5:')).map((f) => JSON.parse(f.replace(/^5:\d+\+::/, '')));
+    assert.deepStrictEqual(sent[0], { name: 'joinDoc', args: [DOC, { encodeRanges: true }] });
+    // "\section{Giriş}\n" is 16 characters; the second "hello" is at 13 in the next line.
+    assert.deepStrictEqual(sent[1], { name: 'applyOtUpdate', args: [DOC, { doc: DOC, op: [{ c: 'hello', p: 16 + 13, t: threadId }], v: 42 }] });
+    assert.ok(events.indexOf(`POST /project/${ID}/thread/${threadId}/messages`) < events.indexOf('ws applyOtUpdate'));
+    assert.ok(sockets[0].socket.closed);
+  });
+
+  test('waits for Overleaf to apply the update, ignoring other edits', async () => {
+    const other = `5:::${JSON.stringify({ name: 'otUpdateApplied', args: [{ v: 42, doc: DOC, op: [{ i: 'x', p: 0 }], meta: { source: 'someone' } }] })}`;
+    const mine = `5:::${JSON.stringify({ name: 'otUpdateApplied', args: [{ v: 43, doc: DOC }] })}`;
+    const { client, applied } = setup({ afterUpdate: [other, mine] });
+    await client.addComment(ID, 'main.tex', 'hello', 0, 'x');
+    assert.deepStrictEqual(applied, [other, mine]);
+  });
+
+  test('reports an update Overleaf refused after queueing it', async () => {
+    const { client } = setup({ afterUpdate: [`5:::${JSON.stringify({ name: 'otUpdateError', args: ['Delete component does not match', {}] })}`] });
+    await assert.rejects(client.addComment(ID, 'main.tex', 'hello', 0, 'x'), (e: unknown) => e instanceof RealtimeError && /does not match/.test(e.message));
+  });
+
+  test('refuses a quote Overleaf does not have, and posts nothing', async () => {
+    const { client, calls, sockets } = setup();
+    await assert.rejects(client.addComment(ID, 'main.tex', 'not there', 0, 'x'), (e: unknown) => e instanceof CommentPlacementError && /Sync/.test(e.message));
+    assert.ok(!calls.some((c) => c.method === 'POST'));
+    assert.ok(sockets[0].socket.closed);
+  });
+
+  test('refuses a file that is not a document in the project', async () => {
+    const { client } = setup();
+    await assert.rejects(client.addComment(ID, 'missing.tex', 'hello', 0, 'x'), CommentPlacementError);
+  });
+
+  test('explains documents in the newer editing format', async () => {
+    const { client } = setup({ joinDoc: ['client does not support history-ot'] });
+    await assert.rejects(client.addComment(ID, 'main.tex', 'hello', 0, 'x'), (e: unknown) => e instanceof CommentPlacementError && /on Overleaf/.test(e.message));
   });
 });

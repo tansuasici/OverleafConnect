@@ -25,7 +25,7 @@
 - **Clone or upload** - clone an Overleaf project, or send an existing local folder to one
 - **Conflict resolution** - compare with Overleaf's version and take theirs, keep yours or edit by hand, from the panel
 - **See what changed** - a notification names the files and authors a sync brought, with a diff one click away
-- **Overleaf web features** (optional, with your session cookie) - pick a project from a list, reply to and resolve comments on their lines, compile on Overleaf
+- **Overleaf web features** (optional, with your session cookie) - pick a project from a list, add, reply to and resolve comments on their lines, compile on Overleaf
 - **Works with [Overtex](https://marketplace.visualstudio.com/items?itemName=tansuasici.overtex)** - Overtex builds, previews and handles SyncTeX; it is installed with this extension. Sync waits for each build to finish
 - **Smart .gitignore** - auto-excludes build artifacts from sync
 - **Self-hosted Overleaf** support
@@ -46,7 +46,7 @@ Auto-sync starts immediately. Your Git token is kept in VS Code's secret storage
 Run **Overleaf Connect: Set Overleaf Session Cookie** and paste the value of the `overleaf_session2` cookie from your browser (on a self-hosted server, paste it as `name=value`). Then:
 
 - **Clone Overleaf Project** lists your projects instead of asking for a URL
-- **Show Overleaf Comments** shows comment threads on the lines they refer to; reply, edit or delete your own messages, and resolve, reopen or delete threads from there (new comments are still added on Overleaf)
+- **Show Overleaf Comments** shows comment threads on the lines they refer to; reply, edit or delete your own messages, and resolve, reopen or delete threads from there. To add a comment, select the text (or put the cursor on a line), click the + in the gutter, type and choose Add Comment. It goes on Overleaf's copy of the text, so sync first if you just changed it
 - **Compile on Overleaf** syncs, compiles on Overleaf and opens the PDF
 
 These use Overleaf's website, not a public API, so they may break when Overleaf changes. The cookie is stored in VS Code's secret storage and sent only to Overleaf.
