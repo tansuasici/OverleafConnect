@@ -121,10 +121,16 @@ export function projectWebUrl(gitUrl: string): string | undefined {
   if (!id) {
     return undefined;
   }
+  const origin = webOrigin(gitUrl);
+  return origin && `${origin}/project/${id}`;
+}
+
+/** The web server behind a Git bridge or server URL: git.overleaf.com → https://www.overleaf.com. */
+export function webOrigin(gitOrServerUrl: string): string | undefined {
   try {
-    const u = new URL(stripCredentials(gitUrl));
+    const u = new URL(stripCredentials(gitOrServerUrl));
     const host = /(^|\.)overleaf\.com$/i.test(u.hostname) ? 'www.overleaf.com' : u.host.replace(/^git\./i, '');
-    return `${u.protocol}//${host}/project/${id}`;
+    return `${u.protocol}//${host}`;
   } catch {
     return undefined;
   }

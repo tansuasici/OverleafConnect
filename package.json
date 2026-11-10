@@ -155,6 +155,23 @@
         "title": "Upload Folder to Overleaf Project",
         "category": "Overleaf Connect",
         "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "overleafconnect.setSessionCookie",
+        "title": "Set Overleaf Session Cookie",
+        "category": "Overleaf Connect"
+      },
+      {
+        "command": "overleafconnect.compileOnOverleaf",
+        "title": "Compile on Overleaf",
+        "category": "Overleaf Connect",
+        "icon": "$(file-pdf)"
+      },
+      {
+        "command": "overleafconnect.showComments",
+        "title": "Show Overleaf Comments",
+        "category": "Overleaf Connect",
+        "icon": "$(comment-discussion)"
       }
     ],
     "configuration": {
@@ -219,7 +236,11 @@
         },
         "overleafconnect.notifications.remoteChanges": {
           "type": "string",
-          "enum": ["notification", "statusBar", "off"],
+          "enum": [
+            "notification",
+            "statusBar",
+            "off"
+          ],
           "enumDescriptions": [
             "Show a notification with a button to compare the changed files.",
             "Show a short message in the status bar.",
@@ -305,6 +326,11 @@
           "command": "overleafconnect.showLog",
           "when": "view == overleafconnect.syncView",
           "group": "more@2"
+        },
+        {
+          "command": "overleafconnect.setSessionCookie",
+          "when": "view == overleafconnect.syncView",
+          "group": "more@3"
         }
       ],
       "view/item/context": [
@@ -357,6 +383,21 @@
           "command": "overleafconnect.abortMerge",
           "when": "view == overleafconnect.syncView && viewItem == overleafFolder.conflict",
           "group": "inline@2"
+        },
+        {
+          "command": "overleafconnect.compileOnOverleaf",
+          "when": "view == overleafconnect.syncView && viewItem =~ /^overleafFolder/",
+          "group": "inline@4"
+        },
+        {
+          "command": "overleafconnect.showComments",
+          "when": "view == overleafconnect.syncView && viewItem =~ /^overleafFolder/",
+          "group": "web@1"
+        },
+        {
+          "command": "overleafconnect.compileOnOverleaf",
+          "when": "view == overleafconnect.syncView && viewItem =~ /^overleafFolder/",
+          "group": "web@2"
         }
       ],
       "commandPalette": [

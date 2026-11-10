@@ -19,6 +19,7 @@ import { SyncState } from './types';
 import { getConfig } from './utils/config';
 import { getOutputChannel } from './ui/outputChannel';
 import { ensureGitignore } from './utils/gitignore';
+import { compileOnOverleaf, OverleafComments, pickProjectToClone } from './ui/webFeatures';
 
 const syncs = new SyncGroup<SyncManager>();
 let statusBar: StatusBarManager | undefined;
@@ -40,6 +41,13 @@ function refreshViews(): void {
   tree?.refresh();
   void vscode.commands.executeCommand('setContext', 'overleafconnect.connected', syncs.size > 0);
   void vscode.commands.executeCommand('setContext', 'overleafconnect.paused', syncs.paused);
+}
+
+/** The active editor's workspace folder, when it is connected. */
+function currentFolderPath(): string | undefined {
+  const uri = vscode.window.activeTextEditor?.document.uri;
+  const folder = uri && vscode.workspace.getWorkspaceFolder(uri);
+  return folder && syncs.get(folder.uri.fsPath) ? folder.uri.fsPath : undefined;
 }
 
 /** The folder a panel row belongs to, or the current one when run from elsewhere. */
@@ -78,6 +86,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Overtex (a dependency) builds and previews; its output must not be pushed to Overleaf.
   const syncExcludes = () => [...config.sync.excludePatterns, ...OVERTEX_SYNC_EXCLUDES];
 
+  const comments = new OverleafComments();
+  context.subscriptions.push(comments);
+
   // ---- Register Sync Commands ----
   context.subscriptions.push(
     vscode.commands.registerCommand('overleafconnect.configure', async () => {
@@ -94,8 +105,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand('overleafconnect.cloneProject', async () => {
-      // Always ask for project ID/URL
-      const creds = await authManager.promptForClone();
+      // From the project list when a session cookie is stored, else by ID or URL
+      const picked = await pickProjectToClone(authManager, getConfig().overleaf.serverUrl);
+      if (picked === undefined) {
+        return;
+      }
+      const creds = await authManager.promptForClone(picked ?? undefined);
 
       if (!creds) {
         return;
@@ -115,6 +130,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const projectName = await vscode.window.showInputBox({
         prompt: 'Enter a folder name for the project',
         value: 'overleaf-project',
+        validateInput: (v) => (v && !/[\\/]/.test(v) ? null : 'Enter a folder name without slashes'),
         ignoreFocusOut: true,
       });
 
@@ -189,6 +205,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('overleafconnect.logout', async () => {
       await authManager.deleteToken();
+      vscode.workspace.workspaceFolders?.forEach((f) => comments.clear(f.uri.fsPath));
       syncs.clear();
       refreshViews();
     })
@@ -275,6 +292,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         await uploadFolder(folder, authManager, config, syncExcludes());
       }
     }),
+    vscode.commands.registerCommand('overleafconnect.setSessionCookie', async () => {
+      if (await authManager.promptForSessionCookie()) {
+        vscode.window.showInformationMessage('Overleaf Connect: Session cookie saved. The project list, comments and compiling on Overleaf can use it now.');
+      }
+    }),
+    vscode.commands.registerCommand('overleafconnect.compileOnOverleaf', async (node?: { folderPath?: string }) => {
+      const folderPath = node?.folderPath ?? currentFolderPath() ?? (await pickFolder())?.uri.fsPath;
+      if (folderPath) {
+        await compileOnOverleaf(authManager, folderPath, syncs.get(folderPath), context.globalStorageUri);
+      }
+    }),
+    vscode.commands.registerCommand('overleafconnect.showComments', async (node?: { folderPath?: string }) => {
+      const folderPath = node?.folderPath ?? currentFolderPath() ?? (await pickFolder())?.uri.fsPath;
+      if (folderPath) {
+        await comments.show(authManager, folderPath);
+      }
+    }),
     vscode.commands.registerCommand('overleafconnect.refreshView', async () => {
       await Promise.all(syncs.entries().map(([, s]) => s.refreshSnapshot()));
     })
@@ -312,7 +346,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(async (e) => {
-      e.removed.forEach((folder) => syncs.remove(folder.uri.fsPath));
+      e.removed.forEach((folder) => {
+        syncs.remove(folder.uri.fsPath);
+        comments.clear(folder.uri.fsPath);
+      });
       for (const folder of e.added) {
         if (await authManager.isAuthenticated(folder.uri.fsPath)) {
           await initializeSync(folder, authManager, config, syncExcludes());

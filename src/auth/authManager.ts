@@ -2,8 +2,11 @@ import * as vscode from 'vscode';
 import simpleGit from 'simple-git';
 import { getConfig } from '../utils/config';
 import { pickProjectUrl, readMarker, resolveProjectUrl, writeMarker } from './projectUrl';
+import { normalizeCookie } from '../web/webModel';
 
 const SECRET_KEY_TOKEN = 'overleafconnect.overleaf.token';
+/** The browser session cookie ("name=value") for the web features; never logged or shown. */
+const SECRET_KEY_SESSION_COOKIE = 'overleafconnect.overleaf.sessionCookie';
 /** Older versions kept one project URL for every workspace; it is only read now, to migrate it. */
 const SECRET_KEY_LEGACY_PROJECT_URL = 'overleafconnect.overleaf.projectUrl';
 
@@ -25,7 +28,35 @@ export class AuthManager implements vscode.Disposable {
   async deleteToken(): Promise<void> {
     await this.secretStorage.delete(SECRET_KEY_TOKEN);
     await this.secretStorage.delete(SECRET_KEY_LEGACY_PROJECT_URL);
+    await this.secretStorage.delete(SECRET_KEY_SESSION_COOKIE);
     vscode.window.showInformationMessage('Overleaf Connect: Overleaf credentials cleared.');
+  }
+
+  async getSessionCookie(): Promise<string | undefined> {
+    return this.secretStorage.get(SECRET_KEY_SESSION_COOKIE);
+  }
+
+  async deleteSessionCookie(): Promise<void> {
+    await this.secretStorage.delete(SECRET_KEY_SESSION_COOKIE);
+  }
+
+  /** Asks for the session cookie in a password box and stores it; undefined when cancelled. */
+  async promptForSessionCookie(): Promise<string | undefined> {
+    const input = await vscode.window.showInputBox({
+      title: 'Overleaf Connect: Overleaf Session Cookie',
+      prompt:
+        'For the project list, comments and compiling on Overleaf. In your browser, signed in to Overleaf, copy the session cookie as name=value (on overleaf.com it is overleaf_session2).',
+      placeHolder: 'overleaf_session2=...',
+      password: true,
+      ignoreFocusOut: true,
+      validateInput: (v) => (normalizeCookie(v) ? null : 'Paste the cookie as name=value'),
+    });
+    const cookie = input && normalizeCookie(input);
+    if (!cookie) {
+      return undefined;
+    }
+    await this.secretStorage.store(SECRET_KEY_SESSION_COOKIE, cookie);
+    return cookie;
   }
 
   /**
@@ -127,8 +158,8 @@ export class AuthManager implements vscode.Disposable {
    * project URL into the new folder's marker, so the open workspace keeps its own project.
    * No pre-validation - clone itself serves as validation.
    */
-  async promptForClone(): Promise<{ token: string; projectUrl: string } | undefined> {
-    const rawInput = await vscode.window.showInputBox({
+  async promptForClone(projectId?: string): Promise<{ token: string; projectUrl: string } | undefined> {
+    const rawInput = projectId ?? await vscode.window.showInputBox({
       title: 'Overleaf Connect: Overleaf Project',
       prompt: 'Enter project ID, Overleaf URL, or Git URL',
       placeHolder: 'abc123def456',
