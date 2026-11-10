@@ -82,10 +82,18 @@ export class SyncTreeProvider implements vscode.TreeDataProvider<Node>, vscode.D
         item.tooltip = node.conflict
           ? `${node.relativePath} — conflicts with Overleaf`
           : `${node.relativePath} — ${exists ? 'not on Overleaf yet' : 'deletion not on Overleaf yet'}`;
-        if (exists) {
-          item.command = { command: 'vscode.open', title: 'Open', arguments: [uri] };
+        if (node.conflict) {
+          item.tooltip += '\nClick to compare. Inline: take Overleaf\'s, keep yours, edit by hand, mark resolved.';
         }
-        item.contextValue = 'overleafFile';
+        if (node.conflict) {
+          item.command = { command: 'overleafconnect.showConflict', title: 'Compare with Overleaf', arguments: [node] };
+          item.contextValue = 'overleafConflict';
+        } else {
+          if (exists) {
+            item.command = { command: 'vscode.open', title: 'Open', arguments: [uri] };
+          }
+          item.contextValue = 'overleafFile';
+        }
         return item;
       }
       case 'commit': {
@@ -125,7 +133,7 @@ function folderItem(folderPath: string, snap: SyncSnapshot | undefined, paused: 
   tip.appendText(`Folder: ${folderPath}\n`);
   tip.appendText(snap.lastSyncAt ? `Last sync: ${snap.lastSyncAt.toLocaleString()}` : 'Not synced yet in this session');
   item.tooltip = tip;
-  item.contextValue = paused ? 'overleafFolder.paused' : 'overleafFolder';
+  item.contextValue = snap.state === SyncState.Conflict ? 'overleafFolder.conflict' : paused ? 'overleafFolder.paused' : 'overleafFolder';
   return item;
 }
 

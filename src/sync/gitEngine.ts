@@ -1,8 +1,11 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import simpleGit, { SimpleGit, PullResult, StatusResult } from 'simple-git';
 import { GitEngineOptions } from '../types';
 import { buildAuthenticatedUrl } from '../auth/credentialHelper';
 import { LOG_FORMAT, parseLog, RemoteCommit } from '../ui/syncModel';
+import { ConflictSide, stageOf } from './conflictModel';
 
 export class GitEngine implements vscode.Disposable {
   private git: SimpleGit;
@@ -131,6 +134,75 @@ export class GitEngine implements vscode.Disposable {
   async getConflictedFiles(): Promise<string[]> {
     const st = await this.status();
     return st.conflicted;
+  }
+
+  /** True while a merge waits to be committed (MERGE_HEAD exists). */
+  async isMerging(): Promise<boolean> {
+    return this.gitPathExists('MERGE_HEAD');
+  }
+
+  /** True while a rebase is stopped; then stage 2 is Overleaf's side, not yours. */
+  async isRebasing(): Promise<boolean> {
+    return (await this.gitPathExists('rebase-merge')) || (await this.gitPathExists('rebase-apply'));
+  }
+
+  // Checked on disk: simple-git does not reject on a non-zero exit with empty stderr, so `rev-parse -q --verify` cannot tell.
+  private async gitPathExists(name: string): Promise<boolean> {
+    try {
+      const p = await this.git.raw(['rev-parse', '--git-path', name]);
+      return fs.existsSync(path.resolve(this.workspacePath, p.trim()));
+    } catch {
+      return false;
+    }
+  }
+
+  /** Paths git still marks unmerged, whatever kind of conflict (content, modify/delete, add/add). */
+  async unmergedFiles(): Promise<string[]> {
+    const out = await this.git.raw(['diff', '--name-only', '--diff-filter=U']);
+    return [...new Set(out.split('\n').map((l) => l.trim()).filter(Boolean))];
+  }
+
+  async hasStage(stage: 2 | 3, relativePath: string): Promise<boolean> {
+    try {
+      await this.git.raw(['cat-file', '-e', `:${stage}:${relativePath}`]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** One side of a conflicted file, exactly as stored, or undefined when that side deleted it. */
+  async showStage(side: ConflictSide, relativePath: string): Promise<string | undefined> {
+    const stage = stageOf(side);
+    if (!(await this.hasStage(stage, relativePath))) {
+      return undefined;
+    }
+    // A separate instance: the shared one trims output, which would change the file's first and last lines.
+    return simpleGit({ baseDir: this.workspacePath, trimmed: false }).raw(['show', `:${stage}:${relativePath}`]);
+  }
+
+  /** Resolves a conflicted file with one side's version, deleting it when that side deleted it. */
+  async resolveWith(side: ConflictSide, relativePath: string): Promise<void> {
+    if (await this.hasStage(stageOf(side), relativePath)) {
+      await this.git.raw(['checkout', `--${side}`, '--', relativePath]);
+      await this.git.raw(['add', '--', relativePath]);
+    } else {
+      await this.git.raw(['rm', '-q', '--', relativePath]);
+    }
+  }
+
+  /** Records the file as it is on disk (or its deletion) as the resolution. */
+  async markResolved(relativePath: string): Promise<void> {
+    if (fs.existsSync(path.join(this.workspacePath, relativePath))) {
+      await this.git.raw(['add', '--', relativePath]);
+    } else {
+      await this.git.raw(['rm', '-q', '--cached', '--', relativePath]);
+    }
+  }
+
+  /** Commits the merge once nothing is unmerged, with a fixed message so no remote URL lands in Overleaf's history. */
+  async commitMerge(): Promise<void> {
+    await this.git.raw(['commit', '-m', 'Merge changes from Overleaf']);
   }
 
   /** The newest commits on the Overleaf branch as of the last fetch. */

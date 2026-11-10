@@ -10,6 +10,8 @@ import { StatusBarManager } from './ui/statusBar';
 import { BuildSyncGate, OVERTEX_ID, OVERTEX_SYNC_EXCLUDES, OvertexBuildEvents } from './latex/overtex';
 import { SyncGroup } from './sync/syncGroup';
 import { SyncDecorationProvider, SyncTreeProvider } from './ui/syncView';
+import { ConflictContentProvider, showConflictDiff } from './ui/conflictView';
+import { CONFLICT_SCHEME, ConflictSide } from './sync/conflictModel';
 import { writeMarker } from './auth/projectUrl';
 import { SyncState } from './types';
 import { getConfig } from './utils/config';
@@ -66,7 +68,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       decorations?.prune();
       refreshViews();
     }),
-    vscode.window.onDidChangeActiveTextEditor(() => refreshViews())
+    vscode.window.onDidChangeActiveTextEditor(() => refreshViews()),
+    vscode.workspace.registerTextDocumentContentProvider(CONFLICT_SCHEME, new ConflictContentProvider(syncs))
   );
 
   // Overtex (a dependency) builds and previews; its output must not be pushed to Overleaf.
@@ -202,6 +205,45 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       syncFor(node)?.resume();
       refreshViews();
     }),
+    vscode.commands.registerCommand('overleafconnect.showConflict', async (node?: ConflictNode) => {
+      const sync = node?.folderPath && syncs.get(node.folderPath);
+      if (sync && node?.relativePath) {
+        await showConflictDiff(sync, node.folderPath!, node.relativePath);
+      }
+    }),
+    vscode.commands.registerCommand('overleafconnect.takeOverleaf', (node?: ConflictNode) => resolveConflict(node, 'theirs')),
+    vscode.commands.registerCommand('overleafconnect.keepMine', (node?: ConflictNode) => resolveConflict(node, 'ours')),
+    vscode.commands.registerCommand('overleafconnect.openMerged', async (node?: ConflictNode) => {
+      if (node?.folderPath && node.relativePath) {
+        try {
+          await vscode.window.showTextDocument(vscode.Uri.file(path.join(node.folderPath, node.relativePath)), { preview: false });
+        } catch {
+          vscode.window.showWarningMessage(`Overleaf Connect: ${node.relativePath} was deleted on one side; take a version instead.`);
+        }
+      }
+    }),
+    vscode.commands.registerCommand('overleafconnect.markResolved', async (node?: ConflictNode) => {
+      const sync = node?.folderPath && syncs.get(node.folderPath);
+      if (sync && node?.relativePath) {
+        const doc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === path.join(node.folderPath!, node.relativePath!));
+        await doc?.save();
+        await reportConflictStep(() => sync.markResolved(node.relativePath!));
+      }
+    }),
+    vscode.commands.registerCommand('overleafconnect.abortMerge', async (node?: { folderPath?: string }) => {
+      const sync = syncFor(node);
+      if (!sync) {
+        return;
+      }
+      const choice = await vscode.window.showWarningMessage(
+        'Abort the merge with Overleaf? Files go back to your last synced version; resolutions made so far are lost.',
+        { modal: true },
+        'Abort Merge'
+      );
+      if (choice === 'Abort Merge') {
+        await reportConflictStep(() => sync.abortMerge());
+      }
+    }),
     vscode.commands.registerCommand('overleafconnect.refreshView', async () => {
       await Promise.all(syncs.entries().map(([, s]) => s.refreshSnapshot()));
     })
@@ -265,6 +307,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   outputChannel.appendLine('[Overleaf Connect] Extension activated');
 }
 
+type ConflictNode = { folderPath?: string; relativePath?: string };
+
+async function resolveConflict(node: ConflictNode | undefined, side: ConflictSide): Promise<void> {
+  const sync = node?.folderPath && syncs.get(node.folderPath);
+  if (sync && node?.relativePath) {
+    await reportConflictStep(() => sync.resolveConflict(node.relativePath!, side));
+  }
+}
+
+async function reportConflictStep(step: () => Promise<void>): Promise<void> {
+  try {
+    await step();
+  } catch (error) {
+    vscode.window.showErrorMessage(`Overleaf Connect: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 /** The only folder, or the one the user picks when the workspace has several. */
 async function pickFolder(): Promise<vscode.WorkspaceFolder | undefined> {
   const folders = vscode.workspace.workspaceFolders ?? [];
@@ -316,6 +375,9 @@ async function initializeSync(
   });
   syncs.set(workspacePath, syncManager);
   void syncManager.refreshSnapshot();
+
+  // A merge left waiting by a reload or crash: show it instead of syncing over it.
+  await syncManager.detectConflict();
 
   if (config.sync.pullOnOpen) {
     await syncManager.syncNow();

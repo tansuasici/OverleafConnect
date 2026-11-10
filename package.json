@@ -101,6 +101,42 @@
         "title": "Refresh Overleaf Panel",
         "category": "Overleaf Connect",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "overleafconnect.showConflict",
+        "title": "Compare with Overleaf",
+        "category": "Overleaf Connect",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "overleafconnect.takeOverleaf",
+        "title": "Take Overleaf's Version",
+        "category": "Overleaf Connect",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "overleafconnect.keepMine",
+        "title": "Keep My Version",
+        "category": "Overleaf Connect",
+        "icon": "$(account)"
+      },
+      {
+        "command": "overleafconnect.openMerged",
+        "title": "Edit Conflict by Hand",
+        "category": "Overleaf Connect",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "overleafconnect.markResolved",
+        "title": "Mark as Resolved",
+        "category": "Overleaf Connect",
+        "icon": "$(check)"
+      },
+      {
+        "command": "overleafconnect.abortMerge",
+        "title": "Abort Merge",
+        "category": "Overleaf Connect",
+        "icon": "$(discard)"
       }
     ],
     "configuration": {
@@ -257,6 +293,36 @@
           "command": "overleafconnect.resumeFolder",
           "when": "view == overleafconnect.syncView && viewItem == overleafFolder.paused",
           "group": "inline@2"
+        },
+        {
+          "command": "overleafconnect.takeOverleaf",
+          "when": "view == overleafconnect.syncView && viewItem == overleafConflict",
+          "group": "inline@1"
+        },
+        {
+          "command": "overleafconnect.keepMine",
+          "when": "view == overleafconnect.syncView && viewItem == overleafConflict",
+          "group": "inline@2"
+        },
+        {
+          "command": "overleafconnect.openMerged",
+          "when": "view == overleafconnect.syncView && viewItem == overleafConflict",
+          "group": "inline@3"
+        },
+        {
+          "command": "overleafconnect.markResolved",
+          "when": "view == overleafconnect.syncView && viewItem == overleafConflict",
+          "group": "inline@4"
+        },
+        {
+          "command": "overleafconnect.showConflict",
+          "when": "view == overleafconnect.syncView && viewItem == overleafConflict",
+          "group": "conflict@1"
+        },
+        {
+          "command": "overleafconnect.abortMerge",
+          "when": "view == overleafconnect.syncView && viewItem == overleafFolder.conflict",
+          "group": "inline@2"
         }
       ],
       "commandPalette": [
@@ -270,6 +336,30 @@
         },
         {
           "command": "overleafconnect.resumeFolder",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.showConflict",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.takeOverleaf",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.keepMine",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.openMerged",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.markResolved",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.abortMerge",
           "when": "false"
         }
       ]

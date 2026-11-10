@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { GitEngine } from './gitEngine';
 import { FileWatcher } from './fileWatcher';
 import { ConflictHandler } from './conflictHandler';
+import { ConflictSide, hasConflictMarkers } from './conflictModel';
 import { SyncState, ExtensionConfig } from '../types';
 import { pendingFromStatus, RemoteCommit, SyncSnapshot } from '../ui/syncModel';
 import { Logger } from '../utils/logger';
@@ -36,7 +39,7 @@ export class SyncManager implements vscode.Disposable {
     private config: ExtensionConfig,
     private readonly projectUrl = ''
   ) {
-    this.conflictHandler = new ConflictHandler(gitEngine);
+    this.conflictHandler = new ConflictHandler(gitEngine, () => this.abortMerge());
     this.watcherListener = fileWatcher.onDidChangeDirty(() => {
       if (!this.isSyncing) {
         void this.refreshSnapshot();
@@ -62,7 +65,8 @@ export class SyncManager implements vscode.Disposable {
       const status = await this.gitEngine.statusAllFiles();
       const unpushed = await this.gitEngine.unpushedFiles();
       this.pendingFiles = pendingFromStatus([...status.files, ...unpushed.map((path) => ({ path }))]);
-      this.conflictedFiles = pendingFromStatus(status.conflicted.map((path) => ({ path })));
+      const unmerged = await this.gitEngine.unmergedFiles();
+      this.conflictedFiles = pendingFromStatus([...status.conflicted, ...unmerged].map((path) => ({ path })));
       this.recentRemoteCommits = await this.gitEngine.remoteLog(5);
     } catch {
       // Not a repository any more, or git is busy: keep what was shown.
@@ -71,13 +75,14 @@ export class SyncManager implements vscode.Disposable {
   }
 
   start(): void {
-    if (this.timer) {
+    // A merge waiting on the user restarts auto-sync itself once it is finished.
+    if (this.timer || this.state === SyncState.Conflict) {
       return;
     }
     const intervalMs = this.config.sync.intervalSeconds * 1000;
     this.timer = setInterval(() => this.syncCycle(), intervalMs);
     this.logger.info(`Auto-sync started (every ${this.config.sync.intervalSeconds}s)`);
-    if (!this.isPaused && this.state !== SyncState.Conflict) {
+    if (!this.isPaused) {
       this.setState(SyncState.Idle);
     }
   }
@@ -108,10 +113,125 @@ export class SyncManager implements vscode.Disposable {
     if (this.state === SyncState.Disabled) {
       this.setState(SyncState.Idle);
     }
+    // The timer may have been stopped by a conflict that ended while paused (e.g. Abort Merge).
+    this.restartAutoSync();
   }
 
   async syncNow(): Promise<void> {
-    await this.syncCycle();
+    if (this.state === SyncState.Conflict) {
+      await this.continueMerge();
+    } else {
+      await this.syncCycle();
+    }
+  }
+
+  /** Enters the conflict state if a merge is waiting, e.g. after a reload in the middle of one. */
+  async detectConflict(): Promise<boolean> {
+    if (this.state !== SyncState.Conflict && (await this.gitEngine.isMerging())) {
+      this.enterConflict(await this.gitEngine.unmergedFiles().catch(() => []));
+      await this.refreshSnapshot();
+      return true;
+    }
+    return this.state === SyncState.Conflict;
+  }
+
+  /** One side of a conflicted file, or undefined when that side deleted it. */
+  conflictVersion(relativePath: string, side: ConflictSide): Promise<string | undefined> {
+    return this.gitEngine.showStage(side, relativePath);
+  }
+
+  /** Resolves a file with your version ("ours") or Overleaf's ("theirs"); finishes the merge after the last one. */
+  async resolveConflict(relativePath: string, side: ConflictSide): Promise<void> {
+    await this.conflictStep(() => this.gitEngine.resolveWith(side, relativePath));
+  }
+
+  /** Takes the file as edited by hand as the resolution, refusing while conflict markers remain. */
+  async markResolved(relativePath: string): Promise<void> {
+    const file = path.join(this.gitEngine.getWorkspacePath(), relativePath);
+    if (fs.existsSync(file) && hasConflictMarkers(await fs.promises.readFile(file, 'utf8'))) {
+      throw new Error(`${relativePath} still has conflict markers (<<<<<<< … >>>>>>>). Remove them, save, and try again.`);
+    }
+    await this.conflictStep(() => this.gitEngine.markResolved(relativePath));
+  }
+
+  /** Undoes the merge. Sync is paused afterwards, since the next one would hit the same conflict. */
+  async abortMerge(): Promise<void> {
+    if (this.isSyncing) {
+      throw new Error('A sync is running; try again in a moment.');
+    }
+    await this.gitEngine.abortMerge();
+    this.logger.info('Merge aborted');
+    this.setState(SyncState.Idle);
+    this.pause();
+    await this.refreshSnapshot();
+    void vscode.window.showInformationMessage(
+      `Overleaf Connect: Merge aborted in ${path.basename(this.gitEngine.getWorkspacePath())}. ` +
+        'Sync is paused so it does not stop on the same conflict again; your changes stay local until you resume.'
+    );
+  }
+
+  private async conflictStep(step: () => Promise<void>): Promise<void> {
+    if (this.isSyncing) {
+      throw new Error('A sync is running; try again in a moment.');
+    }
+    await step();
+    await this.continueMerge();
+  }
+
+  /** Finishes the merge once nothing is unmerged; otherwise only refreshes what the panel shows. */
+  private async continueMerge(): Promise<void> {
+    if (this.isSyncing) {
+      return;
+    }
+    if (!(await this.gitEngine.isMerging())) {
+      // Committed or aborted outside VS Code: back to normal syncing.
+      this.setState(SyncState.Idle);
+      this.restartAutoSync();
+      await this.syncCycle();
+      return;
+    }
+    if ((await this.gitEngine.unmergedFiles()).length) {
+      await this.refreshSnapshot();
+      return;
+    }
+    this.isSyncing = true;
+    try {
+      await this.gitEngine.commitMerge();
+      this.setState(SyncState.Pushing);
+      await this.gitEngine.push();
+      this.fileWatcher.reset();
+      this.logger.info('Merge resolved and pushed');
+      this.markSynced();
+      this.restartAutoSync();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.lastError = msg;
+      this.logger.error(`Finishing the merge failed: ${msg}`);
+      if (await this.gitEngine.isMerging()) {
+        this.setState(SyncState.Conflict);
+        void vscode.window.showErrorMessage(`Overleaf Connect: Could not commit the merge — ${msg}`);
+      } else {
+        // Committed but not pushed: the next sync pushes it. (start() sets Idle, so restart before marking the error.)
+        this.restartAutoSync();
+        this.setState(SyncState.Error);
+      }
+    } finally {
+      this.isSyncing = false;
+      await this.refreshSnapshot();
+    }
+  }
+
+  private enterConflict(files: string[]): void {
+    this.lastError = undefined;
+    this.setState(SyncState.Conflict);
+    this.stop();
+    void this.conflictHandler.notify(files);
+  }
+
+  private restartAutoSync(): void {
+    if (this.config.sync.enabled && !this.isPaused) {
+      this.start();
+    }
   }
 
   getState(): SyncState {
@@ -149,6 +269,10 @@ export class SyncManager implements vscode.Disposable {
         return;
       }
 
+      if (await this.detectConflict()) {
+        return;
+      }
+
       // Step 1: Fetch remote
       this.logger.info('Fetching remote changes...');
       await this.gitEngine.fetch();
@@ -157,15 +281,19 @@ export class SyncManager implements vscode.Disposable {
       const localChanges = this.fileWatcher.isDirty || await this.gitEngine.hasUncommittedChanges();
 
       let remoteChanges = false;
+      // Local commits Overleaf does not have, e.g. a merge whose push failed or one left after aborting a merge.
+      let ahead = false;
       try {
         const localHead = await this.gitEngine.status();
         remoteChanges = localHead.behind > 0;
+        ahead = localHead.ahead > 0;
       } catch {
         remoteChanges = await this.gitEngine.hasRemoteChanges();
       }
+      const localSide = localChanges || ahead;
 
       // Case A: No changes
-      if (!localChanges && !remoteChanges) {
+      if (!localSide && !remoteChanges) {
         this.logger.info('No changes detected');
         this.markSynced();
         this.isSyncing = false;
@@ -173,7 +301,7 @@ export class SyncManager implements vscode.Disposable {
       }
 
       // Case B: Remote changes only -> Pull
-      if (!localChanges && remoteChanges) {
+      if (!localSide && remoteChanges) {
         this.setState(SyncState.Pulling);
         this.logger.info('Pulling remote changes...');
         await this.gitEngine.pull();
@@ -184,10 +312,12 @@ export class SyncManager implements vscode.Disposable {
       }
 
       // Case C: Local changes only -> Commit + Push
-      if (localChanges && !remoteChanges) {
+      if (localSide && !remoteChanges) {
         this.setState(SyncState.Pushing);
         this.logger.info('Committing and pushing local changes...');
-        await this.commitLocalChanges();
+        if (localChanges) {
+          await this.commitLocalChanges();
+        }
         await this.gitEngine.push();
         this.fileWatcher.reset();
         this.logger.info('Push complete');
@@ -198,7 +328,9 @@ export class SyncManager implements vscode.Disposable {
 
       // Case D: Both local and remote changes -> Commit + Pull (rebase) + Push
       this.logger.info('Both local and remote changes detected. Syncing...');
-      await this.commitLocalChanges();
+      if (localChanges) {
+        await this.commitLocalChanges();
+      }
 
       // Try rebase first
       this.setState(SyncState.Pulling);
@@ -217,6 +349,10 @@ export class SyncManager implements vscode.Disposable {
         } catch {
           // ignore
         }
+        if (await this.gitEngine.isRebasing()) {
+          // The two sides would be the wrong way round for the conflict diff.
+          throw new Error('A rebase with Overleaf stopped and could not be undone. Run "git rebase --abort" in the folder.');
+        }
 
         try {
           await this.gitEngine.pullMerge();
@@ -225,12 +361,14 @@ export class SyncManager implements vscode.Disposable {
           this.fileWatcher.reset();
           this.logger.info('Merge and push complete');
           this.markSynced();
-        } catch {
-          // Merge has conflicts
-          this.logger.error('Merge conflict detected');
-          this.setState(SyncState.Conflict);
-          this.stop(); // Stop auto-sync until resolved
-          await this.conflictHandler.handleConflict();
+        } catch (mergeError) {
+          const unmerged = await this.gitEngine.unmergedFiles().catch(() => []);
+          if (!unmerged.length || !(await this.gitEngine.isMerging())) {
+            throw mergeError;
+          }
+          this.logger.error(`Merge conflict in ${unmerged.length} file(s): ${unmerged.join(', ')}`);
+          // Not awaited: the cycle ends now so the panel shows the conflicts while the toast is open.
+          this.enterConflict(unmerged);
         }
       }
     } catch (error) {
