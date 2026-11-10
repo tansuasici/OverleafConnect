@@ -3,36 +3,35 @@ import * as fs from 'fs';
 import * as path from 'path';
 import simpleGit, { SimpleGit, PullResult, StatusResult } from 'simple-git';
 import { GitEngineOptions } from '../types';
-import { buildAuthenticatedUrl } from '../auth/credentialHelper';
+import { createAuthenticatedGit, scrubRemoteCredentials } from '../auth/credentialHelper';
 import { LOG_FORMAT, parseLog, RemoteCommit } from '../ui/syncModel';
 import { ConflictSide, stageOf } from './conflictModel';
 import { EMPTY_TREE, RemoteUpdate } from './remoteModel';
 
 export class GitEngine implements vscode.Disposable {
   private git: SimpleGit;
-  private authenticatedUrl: string;
+  private remoteUrl: string;
+  private token: string;
+  private username: string;
   private workspacePath: string;
   private branch: string | null = null;
 
   constructor(options: GitEngineOptions) {
     this.workspacePath = options.workspacePath;
-    this.authenticatedUrl = buildAuthenticatedUrl(
-      options.remoteUrl,
-      options.username,
-      options.token
-    );
-
-    this.git = simpleGit({
-      baseDir: options.workspacePath,
-      binary: 'git',
-      maxConcurrentProcesses: 1,
-      trimmed: true,
-    });
+    this.remoteUrl = options.remoteUrl;
+    this.token = options.token;
+    this.username = options.username;
+    // The token reaches git through a credential helper at run time, never through the remote URL.
+    this.git = createAuthenticatedGit({ baseDir: options.workspacePath, token: options.token, username: options.username });
   }
 
   async clone(destPath: string): Promise<void> {
-    const git = simpleGit();
-    await git.clone(this.authenticatedUrl, destPath);
+    await createAuthenticatedGit({ token: this.token, username: this.username }).clone(this.remoteUrl, destPath);
+  }
+
+  /** Takes the token out of an origin URL written by an older version. Returns true when it had one. */
+  async scrubRemoteCredentials(): Promise<boolean> {
+    return scrubRemoteCredentials(this.git);
   }
 
   /**
@@ -287,7 +286,7 @@ export class GitEngine implements vscode.Disposable {
     }
     try {
       await this.git.init();
-      await this.git.raw(['remote', 'add', 'origin', this.authenticatedUrl]);
+      await this.git.raw(['remote', 'add', 'origin', this.remoteUrl]);
       await this.fetch();
       this.branch = null;
       const branch = await this.getBranch();

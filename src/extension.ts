@@ -144,9 +144,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         await vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title: 'Cloning Overleaf project...' },
           async () => {
-            const { buildAuthenticatedUrl } = await import('./auth/credentialHelper');
-            const authUrl = buildAuthenticatedUrl(creds.projectUrl, 'git', creds.token);
-            await simpleGit().clone(authUrl, destPath);
+            const { createAuthenticatedGit } = await import('./auth/credentialHelper');
+            await createAuthenticatedGit({ token: creds.token }).clone(creds.projectUrl, destPath);
           }
         );
 
@@ -437,6 +436,10 @@ async function initializeSync(
       await uploadFolder(folder, authManager, config, excludePatterns);
     }
     return;
+  }
+
+  if (await gitEngine.scrubRemoteCredentials().catch(() => false)) {
+    getOutputChannel().appendLine(`[Overleaf Connect] Removed the token from ${folder.name}'s git remote URL.`);
   }
 
   await ensureGitignore(workspacePath, excludePatterns);

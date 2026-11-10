@@ -204,12 +204,8 @@ export class AuthManager implements vscode.Disposable {
 
   async validateToken(token: string, projectUrl: string): Promise<boolean> {
     try {
-      const url = new URL(projectUrl);
-      url.username = 'git';
-      url.password = token;
-
-      const git = simpleGit();
-      await git.listRemote([url.toString()]);
+      const { createAuthenticatedGit, stripCredentials } = await import('./credentialHelper');
+      await createAuthenticatedGit({ token }).listRemote([stripCredentials(projectUrl)]);
       return true;
     } catch {
       return false;
