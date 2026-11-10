@@ -106,6 +106,7 @@ export class SyncTreeProvider implements vscode.TreeDataProvider<Node>, vscode.D
           item.tooltip = tip;
         }
         item.iconPath = new vscode.ThemeIcon('git-commit');
+        item.command = { command: 'overleafconnect.showRemoteCommit', title: 'Show Changes', arguments: [node] };
         return item;
       }
     }

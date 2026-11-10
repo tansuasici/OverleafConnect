@@ -18,5 +18,8 @@ export function getConfig(): ExtensionConfig {
     overleaf: {
       serverUrl: cfg.get<string>('overleaf.serverUrl', 'https://git.overleaf.com'),
     },
+    notifications: {
+      remoteChanges: cfg.get<'notification' | 'statusBar' | 'off'>('notifications.remoteChanges', 'notification'),
+    },
   };
 }

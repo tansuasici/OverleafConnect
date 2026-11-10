@@ -12,6 +12,8 @@ import { SyncGroup } from './sync/syncGroup';
 import { SyncDecorationProvider, SyncTreeProvider } from './ui/syncView';
 import { ConflictContentProvider, showConflictDiff } from './ui/conflictView';
 import { CONFLICT_SCHEME, ConflictSide } from './sync/conflictModel';
+import { REV_SCHEME } from './sync/remoteModel';
+import { announceRemoteUpdate, RevisionContentProvider, showRemoteUpdate } from './ui/remoteView';
 import { writeMarker } from './auth/projectUrl';
 import { SyncState } from './types';
 import { getConfig } from './utils/config';
@@ -69,7 +71,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       refreshViews();
     }),
     vscode.window.onDidChangeActiveTextEditor(() => refreshViews()),
-    vscode.workspace.registerTextDocumentContentProvider(CONFLICT_SCHEME, new ConflictContentProvider(syncs))
+    vscode.workspace.registerTextDocumentContentProvider(CONFLICT_SCHEME, new ConflictContentProvider(syncs)),
+    vscode.workspace.registerTextDocumentContentProvider(REV_SCHEME, new RevisionContentProvider(syncs))
   );
 
   // Overtex (a dependency) builds and previews; its output must not be pushed to Overleaf.
@@ -244,6 +247,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         await reportConflictStep(() => sync.abortMerge());
       }
     }),
+    vscode.commands.registerCommand('overleafconnect.showRemoteCommit', async (node?: { folderPath?: string; hash?: string }) => {
+      const sync = node?.folderPath && syncs.get(node.folderPath);
+      const update = sync && node?.hash ? await sync.commitUpdate(node.hash) : undefined;
+      if (!sync || !update) {
+        return;
+      }
+      if (!update.files.length) {
+        vscode.window.showInformationMessage('Overleaf Connect: This commit changed no files.');
+        return;
+      }
+      await showRemoteUpdate(sync, node!.folderPath!, update);
+    }),
     vscode.commands.registerCommand('overleafconnect.refreshView', async () => {
       await Promise.all(syncs.entries().map(([, s]) => s.refreshSnapshot()));
     })
@@ -369,6 +384,10 @@ async function initializeSync(
   const fileWatcher = new FileWatcher(workspacePath);
   const syncManager = new SyncManager(gitEngine, fileWatcher, config, projectUrl);
   syncManager.onDidChangeState(() => refreshViews());
+  syncManager.onDidReceiveRemoteUpdate((update) => {
+    // Read now, not at activation, so a change to the setting applies at once.
+    void announceRemoteUpdate(syncManager, workspacePath, update, getConfig().notifications.remoteChanges);
+  });
   syncManager.onDidChangeSnapshot((snapshot) => {
     decorations?.update(workspacePath, snapshot);
     tree?.refresh();

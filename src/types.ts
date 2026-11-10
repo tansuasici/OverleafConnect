@@ -27,6 +27,10 @@ export interface ExtensionConfig {
   overleaf: {
     serverUrl: string;
   };
+  notifications: {
+    /** How changes pulled from Overleaf are announced. */
+    remoteChanges: 'notification' | 'statusBar' | 'off';
+  };
 }
 
 export enum ErrorCategory {

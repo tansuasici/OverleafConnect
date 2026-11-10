@@ -5,6 +5,7 @@ import { GitEngine } from './gitEngine';
 import { FileWatcher } from './fileWatcher';
 import { ConflictHandler } from './conflictHandler';
 import { ConflictSide, hasConflictMarkers } from './conflictModel';
+import { RemoteUpdate } from './remoteModel';
 import { SyncState, ExtensionConfig } from '../types';
 import { pendingFromStatus, RemoteCommit, SyncSnapshot } from '../ui/syncModel';
 import { Logger } from '../utils/logger';
@@ -32,6 +33,9 @@ export class SyncManager implements vscode.Disposable {
   /** Fires after each sync and whenever local files change between syncs. */
   public readonly onDidChangeSnapshot = this._onSnapshotChange.event;
   private readonly watcherListener: vscode.Disposable;
+  private readonly _onRemoteUpdate = new vscode.EventEmitter<RemoteUpdate>();
+  /** Fires after a sync brought in Overleaf's changes to at least one file. */
+  public readonly onDidReceiveRemoteUpdate = this._onRemoteUpdate.event;
 
   constructor(
     private gitEngine: GitEngine,
@@ -133,6 +137,22 @@ export class SyncManager implements vscode.Disposable {
       return true;
     }
     return this.state === SyncState.Conflict;
+  }
+
+  /** A file at one commit, or undefined when it did not exist there. */
+  revisionContent(ref: string, relativePath: string): Promise<string | undefined> {
+    return this.gitEngine.showAt(ref, relativePath);
+  }
+
+  /** The files one Overleaf commit changed, for the panel's commit rows. */
+  commitUpdate(hash: string): Promise<RemoteUpdate | undefined> {
+    return this.gitEngine.commitUpdate(hash);
+  }
+
+  private announce(update: RemoteUpdate | undefined): void {
+    if (update?.files.length) {
+      this._onRemoteUpdate.fire(update);
+    }
   }
 
   /** One side of a conflicted file, or undefined when that side deleted it. */
@@ -291,6 +311,13 @@ export class SyncManager implements vscode.Disposable {
         remoteChanges = await this.gitEngine.hasRemoteChanges();
       }
       const localSide = localChanges || ahead;
+      // Read before pulling: afterwards HEAD has moved and the old version is harder to name.
+      let incoming = remoteChanges ? await this.gitEngine.incomingUpdate() : undefined;
+      // Right after the pull, so a failed push does not hide what already landed; once, as the merge path may follow the rebase.
+      const announcePull = () => {
+        this.announce(incoming);
+        incoming = undefined;
+      };
 
       // Case A: No changes
       if (!localSide && !remoteChanges) {
@@ -307,6 +334,7 @@ export class SyncManager implements vscode.Disposable {
         await this.gitEngine.pull();
         this.logger.info('Pull complete');
         this.markSynced();
+        announcePull();
         this.isSyncing = false;
         return;
       }
@@ -336,6 +364,7 @@ export class SyncManager implements vscode.Disposable {
       this.setState(SyncState.Pulling);
       try {
         await this.gitEngine.pullRebase();
+        announcePull();
         this.setState(SyncState.Pushing);
         await this.gitEngine.push();
         this.fileWatcher.reset();
@@ -356,6 +385,7 @@ export class SyncManager implements vscode.Disposable {
 
         try {
           await this.gitEngine.pullMerge();
+          announcePull();
           this.setState(SyncState.Pushing);
           await this.gitEngine.push();
           this.fileWatcher.reset();
@@ -434,6 +464,7 @@ export class SyncManager implements vscode.Disposable {
     this.fileWatcher.dispose();
     this._onStateChange.dispose();
     this._onSnapshotChange.dispose();
+    this._onRemoteUpdate.dispose();
     this.watcherListener.dispose();
     this.conflictHandler.dispose();
     this.logger.dispose();

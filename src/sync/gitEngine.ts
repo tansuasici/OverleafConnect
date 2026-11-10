@@ -6,6 +6,7 @@ import { GitEngineOptions } from '../types';
 import { buildAuthenticatedUrl } from '../auth/credentialHelper';
 import { LOG_FORMAT, parseLog, RemoteCommit } from '../ui/syncModel';
 import { ConflictSide, stageOf } from './conflictModel';
+import { EMPTY_TREE, RemoteUpdate } from './remoteModel';
 
 export class GitEngine implements vscode.Disposable {
   private git: SimpleGit;
@@ -213,6 +214,53 @@ export class GitEngine implements vscode.Disposable {
     } catch {
       return [];
     }
+  }
+
+  /** What the next pull brings from Overleaf, as of the last fetch: its commits and the files they change from the merge base. */
+  async incomingUpdate(): Promise<RemoteUpdate | undefined> {
+    const branch = await this.getBranch();
+    try {
+      const head = (await this.git.raw(['rev-parse', `origin/${branch}`])).trim();
+      const base = (await this.git.raw(['merge-base', 'HEAD', head])).trim();
+      if (!base || base === head) {
+        return undefined;
+      }
+      const commits = parseLog(await this.git.raw(['log', `${base}..${head}`, `--format=${LOG_FORMAT}`]));
+      return { base, head, commits, files: await this.changedFiles(base, head) };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** One commit as an update: its parent (or an empty tree for the first commit) against it. */
+  async commitUpdate(hash: string): Promise<RemoteUpdate | undefined> {
+    try {
+      const head = (await this.git.raw(['rev-parse', '--verify', `${hash}^{commit}`])).trim();
+      const parents = (await this.git.raw(['rev-list', '--parents', '-n1', head])).trim().split(/\s+/);
+      const base = parents[1] ?? EMPTY_TREE;
+      const commits = parseLog(await this.git.raw(['log', '-n1', head, `--format=${LOG_FORMAT}`]));
+      return { base, head, commits, files: await this.changedFiles(base, head) };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async changedFiles(from: string, to: string): Promise<string[]> {
+    const out = await this.git.raw(['diff', '--name-only', '--no-renames', from, to]);
+    return out.split('\n').map((l) => l.trim()).filter(Boolean);
+  }
+
+  /** A file as it was at a commit, exactly as stored, or undefined when it did not exist there. */
+  async showAt(ref: string, relativePath: string): Promise<string | undefined> {
+    if (ref === EMPTY_TREE) {
+      return undefined;
+    }
+    try {
+      await this.git.raw(['cat-file', '-e', `${ref}:${relativePath}`]);
+    } catch {
+      return undefined;
+    }
+    return simpleGit({ baseDir: this.workspacePath, trimmed: false }).raw(['show', `${ref}:${relativePath}`]);
   }
 
   /** Files in local commits that Overleaf does not have yet (three dots: from the merge base, so Overleaf's own new commits are not counted). */

@@ -137,6 +137,12 @@
         "title": "Abort Merge",
         "category": "Overleaf Connect",
         "icon": "$(discard)"
+      },
+      {
+        "command": "overleafconnect.showRemoteCommit",
+        "title": "Show Changes",
+        "category": "Overleaf Connect",
+        "icon": "$(diff)"
       }
     ],
     "configuration": {
@@ -198,6 +204,17 @@
           "type": "string",
           "default": "https://git.overleaf.com",
           "description": "Overleaf Git server URL (change for self-hosted instances)."
+        },
+        "overleafconnect.notifications.remoteChanges": {
+          "type": "string",
+          "enum": ["notification", "statusBar", "off"],
+          "enumDescriptions": [
+            "Show a notification with a button to compare the changed files.",
+            "Show a short message in the status bar.",
+            "Say nothing; changes still appear in the Overleaf panel."
+          ],
+          "default": "notification",
+          "description": "How to tell you that a sync brought in changes made on Overleaf."
         }
       }
     },
@@ -360,6 +377,10 @@
         },
         {
           "command": "overleafconnect.abortMerge",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.showRemoteCommit",
           "when": "false"
         }
       ]
