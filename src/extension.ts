@@ -14,7 +14,7 @@ import { ConflictContentProvider, showConflictDiff } from './ui/conflictView';
 import { CONFLICT_SCHEME, ConflictSide } from './sync/conflictModel';
 import { REV_SCHEME } from './sync/remoteModel';
 import { announceRemoteUpdate, RevisionContentProvider, showRemoteUpdate } from './ui/remoteView';
-import { writeMarker } from './auth/projectUrl';
+import { projectWebUrl, writeMarker } from './auth/projectUrl';
 import { SyncState } from './types';
 import { getConfig } from './utils/config';
 import { getOutputChannel } from './ui/outputChannel';
@@ -259,6 +259,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       await showRemoteUpdate(sync, node!.folderPath!, update);
     }),
+    vscode.commands.registerCommand('overleafconnect.openInOverleaf', async (node?: { folderPath?: string }) => {
+      const folderPath = node?.folderPath ?? (await pickFolder())?.uri.fsPath;
+      const projectUrl = folderPath ? await authManager.getProjectUrl(folderPath) : undefined;
+      const url = projectUrl && projectWebUrl(projectUrl);
+      if (!url) {
+        vscode.window.showWarningMessage('Overleaf Connect: This folder is not connected to an Overleaf project.');
+        return;
+      }
+      await vscode.env.openExternal(vscode.Uri.parse(url));
+    }),
+    vscode.commands.registerCommand('overleafconnect.uploadFolder', async () => {
+      const folder = await pickFolder();
+      if (folder) {
+        await uploadFolder(folder, authManager, config, syncExcludes());
+      }
+    }),
     vscode.commands.registerCommand('overleafconnect.refreshView', async () => {
       await Promise.all(syncs.entries().map(([, s]) => s.refreshSnapshot()));
     })
@@ -374,8 +390,15 @@ async function initializeSync(
   });
 
   if (!(await gitEngine.isGitRepo())) {
-    getOutputChannel().appendLine(`[Overleaf Connect] ${folder.name} is not a git repository. Use "Clone Overleaf Project" first.`);
+    getOutputChannel().appendLine(`[Overleaf Connect] ${folder.name} is not a git repository yet.`);
     gitEngine.dispose();
+    const choice = await vscode.window.showInformationMessage(
+      `Overleaf Connect: ${folder.name} is linked to an Overleaf project but is not a clone of it yet.`,
+      'Upload This Folder'
+    );
+    if (choice === 'Upload This Folder') {
+      await uploadFolder(folder, authManager, config, excludePatterns);
+    }
     return;
   }
 
@@ -405,6 +428,92 @@ async function initializeSync(
   if (config.sync.enabled) {
     syncManager.start();
   }
+}
+
+/**
+ * Sends a folder that is not a clone yet to its Overleaf project: the folder's files are committed on top of
+ * Overleaf's latest version and pushed, then the folder syncs like a clone.
+ */
+async function uploadFolder(
+  folder: vscode.WorkspaceFolder,
+  authManager: AuthManager,
+  config: ReturnType<typeof getConfig>,
+  excludePatterns: string[]
+): Promise<void> {
+  const workspacePath = folder.uri.fsPath;
+  if (await simpleGit(workspacePath).checkIsRepo().catch(() => false)) {
+    vscode.window.showWarningMessage(`Overleaf Connect: ${folder.name} is already a git repository; use "Connect This Folder" instead.`);
+    return;
+  }
+  let token = await authManager.getToken();
+  let projectUrl = await authManager.getProjectUrl(workspacePath);
+  if (!token || !projectUrl) {
+    const creds = await authManager.promptForCredentials(workspacePath);
+    if (!creds) {
+      return;
+    }
+    ({ token, projectUrl } = creds);
+  }
+
+  const engine = new GitEngine({ workspacePath, remoteUrl: projectUrl, username: 'git', token });
+  let pushed = false;
+  try {
+    const overleafOnly = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'Overleaf Connect: Reading the Overleaf project...' },
+      async () => {
+        const only = await engine.adoptRemote();
+        await ensureGitignore(workspacePath, excludePatterns);
+        return only;
+      }
+    );
+    const status = await engine.statusAllFiles();
+    const replaced = status.modified.length;
+    const added = status.not_added.length + status.created.length;
+    const parts = [`${added} new file${added === 1 ? '' : 's'}`, `${replaced} replaced`];
+    const listed = overleafOnly.slice(0, 5).join(', ') + (overleafOnly.length > 5 ? `, and ${overleafOnly.length - 5} more` : '');
+    const detail = overleafOnly.length
+      ? `${overleafOnly.length} file${overleafOnly.length === 1 ? ' is' : 's are'} only on Overleaf: ${listed}.`
+      : 'Files with the same name are replaced by yours.';
+    const KEEP = 'Upload and Keep Them';
+    const DELETE = 'Upload and Delete Them';
+    const UPLOAD = 'Upload';
+    const choice = await vscode.window.showWarningMessage(
+      `Upload ${folder.name} to the Overleaf project? ${parts.join(', ')}.`,
+      { modal: true, detail },
+      ...(overleafOnly.length ? [KEEP, DELETE] : [UPLOAD])
+    );
+    if (!choice) {
+      engine.undoAdopt();
+      return;
+    }
+    if (choice === KEEP) {
+      await engine.restoreFiles(overleafOnly);
+    }
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'Overleaf Connect: Uploading to Overleaf...' },
+      async () => {
+        await engine.addAll();
+        if (await engine.hasUncommittedChanges()) {
+          await engine.commit('Upload local folder from VS Code');
+        }
+        await engine.pushUpstream();
+      }
+    );
+    pushed = true;
+  } catch (error) {
+    // Nothing reached Overleaf, so the folder goes back to how it was.
+    if (!pushed) {
+      engine.undoAdopt();
+    }
+    const msg = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(`Overleaf Connect: Upload failed - ${msg}`);
+    return;
+  } finally {
+    engine.dispose();
+  }
+  writeMarker(workspacePath, projectUrl);
+  vscode.window.showInformationMessage(`Overleaf Connect: ${folder.name} is on Overleaf and now syncs with it.`);
+  await initializeSync(folder, authManager, config, excludePatterns);
 }
 
 /** Holds sync back during every Overtex build, including the ones it starts on save. */

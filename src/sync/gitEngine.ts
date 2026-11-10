@@ -274,6 +274,57 @@ export class GitEngine implements vscode.Disposable {
     }
   }
 
+  /**
+   * Turns a folder that is not a repository yet into a clone of the Overleaf project without touching its files:
+   * they become local changes on top of Overleaf's latest version. Returns the files only Overleaf has: the next
+   * commit deletes them from the project unless `restoreFiles` brings them back first. Undone if Overleaf cannot be
+   * reached; `undoAdopt` undoes it later.
+   */
+  async adoptRemote(): Promise<string[]> {
+    const gitDir = path.join(this.workspacePath, '.git');
+    if (fs.existsSync(gitDir) || (await this.isGitRepo())) {
+      throw new Error('This folder is already in a git repository.');
+    }
+    try {
+      await this.git.init();
+      await this.git.raw(['remote', 'add', 'origin', this.authenticatedUrl]);
+      await this.fetch();
+      this.branch = null;
+      const branch = await this.getBranch();
+      await this.git.raw(['symbolic-ref', 'HEAD', `refs/heads/${branch}`]);
+      const remoteBranches = await this.git.branch(['-r']);
+      if (!remoteBranches.all.includes(`origin/${branch}`)) {
+        return [];
+      }
+      await this.git.raw(['reset', '-q', `origin/${branch}`]);
+      await this.git.raw(['branch', `--set-upstream-to=origin/${branch}`]);
+    } catch (error) {
+      this.undoAdopt();
+      throw error;
+    }
+    const out = await this.git.raw(['ls-files', '--deleted']);
+    return [...new Set(out.split('\n').map((l) => l.trim()).filter(Boolean))];
+  }
+
+  /** Brings Overleaf's version of these files into the folder. */
+  async restoreFiles(files: string[]): Promise<void> {
+    if (files.length) {
+      await this.git.raw(['checkout', '--', ...files]);
+    }
+  }
+
+  /** Removes the repository `adoptRemote` made; the folder's files were never touched. */
+  undoAdopt(): void {
+    fs.rmSync(path.join(this.workspacePath, '.git'), { recursive: true, force: true });
+    this.branch = null;
+  }
+
+  /** Pushes and makes Overleaf's branch the upstream, for a branch Overleaf did not have yet. */
+  async pushUpstream(): Promise<void> {
+    const branch = await this.getBranch();
+    await this.git.push(['-u', 'origin', branch]);
+  }
+
   getWorkspacePath(): string {
     return this.workspacePath;
   }

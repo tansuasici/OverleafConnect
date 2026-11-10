@@ -7,6 +7,7 @@ import {
   pickProjectUrl,
   projectIdFromUrl,
   projectUrlFromRemote,
+  projectWebUrl,
   readMarker,
   resolveProjectUrl,
   writeMarker,
@@ -96,6 +97,23 @@ function fakeFolderSync(): FolderSync & { log: string[] } {
     },
   };
 }
+
+suite('projectWebUrl', () => {
+  test('maps the Git bridge to the project page', () => {
+    assert.strictEqual(projectWebUrl('https://git.overleaf.com/0123456789abcdef01234567'), 'https://www.overleaf.com/project/0123456789abcdef01234567');
+    assert.strictEqual(projectWebUrl('https://git:tok@git.overleaf.com/0123456789abcdef01234567/'), 'https://www.overleaf.com/project/0123456789abcdef01234567');
+  });
+
+  test('keeps a self-hosted server and drops its git. prefix', () => {
+    assert.strictEqual(projectWebUrl('https://git.latex.example.edu/0123456789ab'), 'https://latex.example.edu/project/0123456789ab');
+    assert.strictEqual(projectWebUrl('http://overleaf.local:8080/0123456789ab'), 'http://overleaf.local:8080/project/0123456789ab');
+  });
+
+  test('returns undefined without a project id', () => {
+    assert.strictEqual(projectWebUrl('https://git.overleaf.com/'), undefined);
+    assert.strictEqual(projectWebUrl('not a url'), undefined);
+  });
+});
 
 suite('SyncGroup', () => {
   test('drives every folder and counts as paused only when all are', async () => {

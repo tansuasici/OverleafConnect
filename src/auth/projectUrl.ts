@@ -115,6 +115,21 @@ export function projectIdFromUrl(url: string): string | undefined {
   return url.match(/\/([a-f0-9]{10,})\/?$/i)?.[1];
 }
 
+/** The project's page in the browser, from its Git bridge URL: git.overleaf.com/<id> → www.overleaf.com/project/<id>. */
+export function projectWebUrl(gitUrl: string): string | undefined {
+  const id = projectIdFromUrl(gitUrl);
+  if (!id) {
+    return undefined;
+  }
+  try {
+    const u = new URL(stripCredentials(gitUrl));
+    const host = /(^|\.)overleaf\.com$/i.test(u.hostname) ? 'www.overleaf.com' : u.host.replace(/^git\./i, '');
+    return `${u.protocol}//${host}/project/${id}`;
+  } catch {
+    return undefined;
+  }
+}
+
 function normalize(url: string): string {
   return stripCredentials(url).replace(/\/$/, '').toLowerCase();
 }
