@@ -86,7 +86,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Overtex (a dependency) builds and previews; its output must not be pushed to Overleaf.
   const syncExcludes = () => [...config.sync.excludePatterns, ...OVERTEX_SYNC_EXCLUDES];
 
-  const comments = new OverleafComments();
+  const comments = new OverleafComments(authManager);
   context.subscriptions.push(comments);
 
   // ---- Register Sync Commands ----

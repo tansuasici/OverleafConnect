@@ -172,6 +172,52 @@
         "title": "Show Overleaf Comments",
         "category": "Overleaf Connect",
         "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "overleafconnect.comments.reply",
+        "title": "Reply",
+        "category": "Overleaf Connect",
+        "icon": "$(reply)"
+      },
+      {
+        "command": "overleafconnect.comments.resolve",
+        "title": "Resolve",
+        "category": "Overleaf Connect",
+        "icon": "$(check)"
+      },
+      {
+        "command": "overleafconnect.comments.reopen",
+        "title": "Reopen",
+        "category": "Overleaf Connect",
+        "icon": "$(issue-reopened)"
+      },
+      {
+        "command": "overleafconnect.comments.deleteThread",
+        "title": "Delete Comment",
+        "category": "Overleaf Connect",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "overleafconnect.comments.edit",
+        "title": "Edit",
+        "category": "Overleaf Connect",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "overleafconnect.comments.deleteMessage",
+        "title": "Delete Message",
+        "category": "Overleaf Connect",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "overleafconnect.comments.saveEdit",
+        "title": "Save",
+        "category": "Overleaf Connect"
+      },
+      {
+        "command": "overleafconnect.comments.cancelEdit",
+        "title": "Cancel",
+        "category": "Overleaf Connect"
       }
     ],
     "configuration": {
@@ -440,6 +486,86 @@
         {
           "command": "overleafconnect.showRemoteCommit",
           "when": "false"
+        },
+        {
+          "command": "overleafconnect.comments.reply",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.comments.resolve",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.comments.reopen",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.comments.deleteThread",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.comments.edit",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.comments.deleteMessage",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.comments.saveEdit",
+          "when": "false"
+        },
+        {
+          "command": "overleafconnect.comments.cancelEdit",
+          "when": "false"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "overleafconnect.comments.reply",
+          "group": "inline",
+          "when": "commentController == overleafconnect.comments && !commentThreadIsEmpty"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "overleafconnect.comments.resolve",
+          "group": "inline@1",
+          "when": "commentController == overleafconnect.comments && commentThread == overleaf.open.doc"
+        },
+        {
+          "command": "overleafconnect.comments.reopen",
+          "group": "inline@1",
+          "when": "commentController == overleafconnect.comments && commentThread == overleaf.resolved.doc"
+        },
+        {
+          "command": "overleafconnect.comments.deleteThread",
+          "group": "inline@2",
+          "when": "commentController == overleafconnect.comments && commentThread =~ /^overleaf\\..*\\.doc$/"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "overleafconnect.comments.edit",
+          "group": "inline@1",
+          "when": "commentController == overleafconnect.comments && comment == own"
+        },
+        {
+          "command": "overleafconnect.comments.deleteMessage",
+          "group": "inline@2",
+          "when": "commentController == overleafconnect.comments && comment == own"
+        }
+      ],
+      "comments/comment/context": [
+        {
+          "command": "overleafconnect.comments.cancelEdit",
+          "group": "inline@1",
+          "when": "commentController == overleafconnect.comments"
+        },
+        {
+          "command": "overleafconnect.comments.saveEdit",
+          "group": "inline@2",
+          "when": "commentController == overleafconnect.comments"
         }
       ]
     }

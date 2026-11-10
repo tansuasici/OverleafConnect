@@ -1,7 +1,21 @@
 // Talks to Overleaf's web pages with the user's session cookie. The cookie is sent only to `origin` and never
 // appears in an error, a log line or a URL. No vscode import, so it is tested with plain mocha and a fake fetch.
 
-import { CSRF_HEADER, parseCompile, parseCsrf, parseProjects, parseRanges, parseThreads, WEB_ENDPOINTS, WebCommentAnchor, WebProject, WebThread, CompileOutput } from './webModel';
+import {
+  CSRF_HEADER,
+  CompileOutput,
+  isWebId,
+  parseCompile,
+  parseCsrf,
+  parseProjects,
+  parseRanges,
+  parseThreads,
+  parseUserId,
+  WEB_ENDPOINTS,
+  WebCommentAnchor,
+  WebProject,
+  WebThread,
+} from './webModel';
 
 export type FetchFn = (url: string, init: { method: string; headers: Record<string, string>; body?: string; redirect: 'manual' }) => Promise<{
   status: number;
@@ -37,7 +51,10 @@ export class OverleafWebClient {
     this.origin = new URL(origin).origin;
   }
 
-  private async request(method: 'GET' | 'POST', pathAndQuery: string, opts: { json?: unknown; csrf?: string; accept?: string } = {}) {
+  /** The CSRF token and user id from each project's page, fetched once per client. */
+  private readonly pages = new Map<string, Promise<{ csrf: string; userId?: string }>>();
+
+  private async request(method: 'GET' | 'POST' | 'DELETE', pathAndQuery: string, opts: { json?: unknown; csrf?: string; accept?: string } = {}) {
     const url = new URL(pathAndQuery, this.origin);
     if (url.origin !== this.origin) {
       throw new Error('Refusing to send the session cookie to another server.');
@@ -58,7 +75,9 @@ export class OverleafWebClient {
     });
     if (!res.ok) {
       const path = url.pathname;
-      throw new WebError(method, path, res.status, (res.status >= 300 && res.status < 400) || res.status === 401 || res.status === 403);
+      // On a change, 403 is a stale CSRF token or a missing permission rather than a dead session.
+      const refused = res.status === 401 || (res.status === 403 && !opts.csrf);
+      throw new WebError(method, path, res.status, (res.status >= 300 && res.status < 400) || refused);
     }
     return res;
   }
@@ -74,12 +93,44 @@ export class OverleafWebClient {
   }
 
   async csrfToken(projectId: string): Promise<string> {
-    const res = await this.request('GET', WEB_ENDPOINTS.projectPage(projectId), { accept: 'text/html' });
-    const token = parseCsrf(await res.text());
-    if (!token) {
-      throw new Error('The project page had no CSRF token; Overleaf may have changed its page.');
+    return (await this.projectPage(projectId)).csrf;
+  }
+
+  /** The signed-in user's id, to tell which comment messages are theirs; undefined when the page does not say. */
+  async userId(projectId: string): Promise<string | undefined> {
+    return (await this.projectPage(projectId)).userId;
+  }
+
+  private projectPage(projectId: string, fresh = false): Promise<{ csrf: string; userId?: string }> {
+    let page = fresh ? undefined : this.pages.get(projectId);
+    if (!page) {
+      page = (async () => {
+        const res = await this.request('GET', WEB_ENDPOINTS.projectPage(projectId), { accept: 'text/html' });
+        const html = await res.text();
+        const csrf = parseCsrf(html);
+        if (!csrf) {
+          throw new Error('The project page had no CSRF token; Overleaf may have changed its page.');
+        }
+        return { csrf, userId: parseUserId(html) };
+      })();
+      page.catch(() => this.pages.delete(projectId));
+      this.pages.set(projectId, page);
     }
-    return token;
+    return page;
+  }
+
+  /** A change to the project, with its CSRF token; a 403 fetches a fresh token and tries once more. */
+  private async change(method: 'POST' | 'DELETE', projectId: string, path: string, json?: unknown) {
+    const send = async (fresh: boolean) =>
+      this.request(method, path, { csrf: (await this.projectPage(projectId, fresh)).csrf, json, accept: 'application/json' });
+    try {
+      return await send(false);
+    } catch (error) {
+      if (error instanceof WebError && error.status === 403) {
+        return send(true);
+      }
+      throw error;
+    }
   }
 
   async listProjects(): Promise<WebProject[]> {
@@ -87,10 +138,11 @@ export class OverleafWebClient {
   }
 
   async compile(projectId: string): Promise<CompileOutput> {
-    const csrf = await this.csrfToken(projectId);
-    const res = await this.request('POST', WEB_ENDPOINTS.compile(projectId), {
-      csrf,
-      json: { rootDoc_id: null, draft: false, check: 'silent', incrementalCompilesEnabled: true },
+    const res = await this.change('POST', projectId, WEB_ENDPOINTS.compile(projectId), {
+      rootDoc_id: null,
+      draft: false,
+      check: 'silent',
+      incrementalCompilesEnabled: true,
     });
     return parseCompile(JSON.parse(await res.text()), this.origin);
   }
@@ -112,4 +164,36 @@ export class OverleafWebClient {
   async commentAnchors(projectId: string): Promise<WebCommentAnchor[]> {
     return parseRanges(await this.getJson(WEB_ENDPOINTS.ranges(projectId)));
   }
+
+  async reply(projectId: string, threadId: string, content: string): Promise<void> {
+    await this.change('POST', projectId, WEB_ENDPOINTS.threadMessages(projectId, ids(threadId)), { content });
+  }
+
+  async editMessage(projectId: string, threadId: string, messageId: string, content: string): Promise<void> {
+    await this.change('POST', projectId, WEB_ENDPOINTS.editMessage(projectId, ids(threadId), ids(messageId)), { content });
+  }
+
+  async deleteMessage(projectId: string, threadId: string, messageId: string): Promise<void> {
+    await this.change('DELETE', projectId, WEB_ENDPOINTS.message(projectId, ids(threadId), ids(messageId)));
+  }
+
+  async resolveThread(projectId: string, docId: string, threadId: string): Promise<void> {
+    await this.change('POST', projectId, WEB_ENDPOINTS.resolveThread(projectId, ids(docId), ids(threadId)));
+  }
+
+  async reopenThread(projectId: string, docId: string, threadId: string): Promise<void> {
+    await this.change('POST', projectId, WEB_ENDPOINTS.reopenThread(projectId, ids(docId), ids(threadId)));
+  }
+
+  async deleteThread(projectId: string, docId: string, threadId: string): Promise<void> {
+    await this.change('DELETE', projectId, WEB_ENDPOINTS.thread(projectId, ids(docId), ids(threadId)));
+  }
+}
+
+/** An id about to go into a path: Overleaf's hex ids only. */
+function ids(id: string): string {
+  if (!isWebId(id)) {
+    throw new Error('Overleaf sent an id this extension does not recognise.');
+  }
+  return id;
 }

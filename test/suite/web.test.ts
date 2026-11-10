@@ -11,6 +11,7 @@ import {
   parseProjects,
   parseRanges,
   parseThreads,
+  parseUserId,
 } from '../../src/web/webModel';
 
 const ID = '0123456789abcdef01234567';
@@ -44,6 +45,11 @@ suite('webModel', () => {
     assert.strictEqual(parseCsrf('<meta name="ol-csrfToken" content="tok1">'), 'tok1');
     assert.strictEqual(parseCsrf("<meta content='tok2' name='ol-csrfToken'/>"), 'tok2');
     assert.strictEqual(parseCsrf('<meta name="other" content="x">'), undefined);
+  });
+
+  test('parseUserId reads the user meta tag', () => {
+    assert.strictEqual(parseUserId('<meta content="u1" name="ol-user_id">'), 'u1');
+    assert.strictEqual(parseUserId('<meta name="ol-csrfToken" content="x">'), undefined);
   });
 
   test('parseProjects sorts active newest first and skips bad ids', () => {
@@ -87,8 +93,8 @@ suite('webModel', () => {
       t1: {
         resolved: false,
         messages: [
-          { content: 'second', timestamp: 2, user: { first_name: 'Ada', last_name: 'L' } },
-          { content: 'first', timestamp: 1, user: {} },
+          { id: 'm2', content: 'second', timestamp: 2, user: { id: 'u1', first_name: 'Ada', last_name: 'L' } },
+          { _id: 'm1', user_id: 'u2', content: 'first', timestamp: 1, user: {} },
         ],
       },
       t2: { resolved: true, messages: [] },
@@ -96,6 +102,10 @@ suite('webModel', () => {
     assert.deepStrictEqual(t.get('t1')!.messages.map((m) => [m.content, m.author]), [
       ['first', 'Overleaf user'],
       ['second', 'Ada L'],
+    ]);
+    assert.deepStrictEqual(t.get('t1')!.messages.map((m) => [m.id, m.userId]), [
+      ['m1', 'u2'],
+      ['m2', 'u1'],
     ]);
     assert.strictEqual(t.get('t2')!.resolved, true);
     assert.strictEqual(parseThreads([]).size, 0);
@@ -106,7 +116,7 @@ suite('webModel', () => {
       { id: 'doc1', ranges: { comments: [{ id: 'c1', op: { c: 'hello', p: 4, t: 't1' } }, { op: { c: '', p: 0, t: 'x' } }] } },
       { id: 'doc2', ranges: {} },
     ]);
-    assert.deepStrictEqual(a, [{ threadId: 't1', quote: 'hello', offset: 4 }]);
+    assert.deepStrictEqual(a, [{ threadId: 't1', docId: 'doc1', quote: 'hello', offset: 4 }]);
   });
 
   test('locateQuote prefers the offset, then the nearest occurrence', () => {
@@ -190,5 +200,63 @@ suite('OverleafWebClient', () => {
     assert.strictEqual(calls[1].headers[CSRF_HEADER], 'tok');
     assert.strictEqual(calls[1].url, `${ORIGIN}/project/${ID}/compile?auto_compile=false`);
     assert.strictEqual(r.pdfUrl, `${ORIGIN}/out.pdf`);
+  });
+
+  const T = 'aaaaaaaaaaaaaaaaaaaaaaaa';
+  const M = 'bbbbbbbbbbbbbbbbbbbbbbbb';
+  const D = 'cccccccccccccccccccccccc';
+  const page = (call: Call) => (call.method === 'GET' ? { status: 200, body: '<meta name="ol-csrfToken" content="tok"><meta name="ol-user_id" content="me">' } : { status: 204 });
+
+  test('comment changes go to their endpoints with the CSRF token, fetching the page once', async () => {
+    const { fetchFn, calls } = fakeFetch(page);
+    const client = new OverleafWebClient(ORIGIN, COOKIE, fetchFn);
+    assert.strictEqual(await client.userId(ID), 'me');
+    await client.reply(ID, T, 'hi');
+    await client.editMessage(ID, T, M, 'hey');
+    await client.deleteMessage(ID, T, M);
+    await client.resolveThread(ID, D, T);
+    await client.reopenThread(ID, D, T);
+    await client.deleteThread(ID, D, T);
+    assert.strictEqual(calls.filter((c) => c.method === 'GET').length, 1);
+    const changes = calls.filter((c) => c.method !== 'GET');
+    assert.deepStrictEqual(
+      changes.map((c) => [c.method, c.url.slice(ORIGIN.length), c.body]),
+      [
+        ['POST', `/project/${ID}/thread/${T}/messages`, '{"content":"hi"}'],
+        ['POST', `/project/${ID}/thread/${T}/messages/${M}/edit`, '{"content":"hey"}'],
+        ['DELETE', `/project/${ID}/thread/${T}/messages/${M}`, undefined],
+        ['POST', `/project/${ID}/doc/${D}/thread/${T}/resolve`, undefined],
+        ['POST', `/project/${ID}/doc/${D}/thread/${T}/reopen`, undefined],
+        ['DELETE', `/project/${ID}/doc/${D}/thread/${T}`, undefined],
+      ]
+    );
+    assert.ok(changes.every((c) => c.headers[CSRF_HEADER] === 'tok' && c.headers.Cookie === COOKIE && c.redirect === 'manual'));
+  });
+
+  test('a 403 on a change refetches the token once and is not taken as signed out', async () => {
+    let pages = 0;
+    const { fetchFn, calls } = fakeFetch((call) => {
+      if (call.method === 'GET') {
+        pages++;
+        return { status: 200, body: `<meta name="ol-csrfToken" content="tok${pages}">` };
+      }
+      return { status: call.headers[CSRF_HEADER] === 'tok2' ? 204 : 403 };
+    });
+    const client = new OverleafWebClient(ORIGIN, COOKIE, fetchFn);
+    await client.reply(ID, T, 'hi');
+    assert.strictEqual(calls.filter((c) => c.method === 'POST').length, 2);
+
+    const { fetchFn: denied } = fakeFetch((call) => (call.method === 'GET' ? page(call) : { status: 403 }));
+    await assert.rejects(new OverleafWebClient(ORIGIN, COOKIE, denied).resolveThread(ID, D, T), (e: unknown) => {
+      assert.ok(e instanceof WebError && e.status === 403 && !e.signedOut);
+      return true;
+    });
+  });
+
+  test('ids that are not Overleaf ids never reach a path', async () => {
+    const { fetchFn, calls } = fakeFetch(page);
+    const client = new OverleafWebClient(ORIGIN, COOKIE, fetchFn);
+    await assert.rejects(client.deleteMessage(ID, T, '../../user/delete'));
+    assert.ok(calls.every((c) => c.method === 'GET'));
   });
 });

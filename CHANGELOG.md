@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Overleaf comments can be answered from VS Code: reply, edit or delete your own messages, and resolve, reopen or delete a thread; resolved threads are shown too
+
 ## [0.2.1] - 2026-11-10
 
 ### Changed

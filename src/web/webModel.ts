@@ -12,6 +12,19 @@ export const WEB_ENDPOINTS = {
   threads: (projectId: string) => `/project/${projectId}/threads`,
   /** Where each comment sits in its document, per document. */
   ranges: (projectId: string) => `/project/${projectId}/ranges`,
+  /** POST {content}: a reply on a thread. */
+  threadMessages: (projectId: string, threadId: string) => `/project/${projectId}/thread/${threadId}/messages`,
+  /** POST {content}: new text for one of the user's own messages. */
+  editMessage: (projectId: string, threadId: string, messageId: string) =>
+    `/project/${projectId}/thread/${threadId}/messages/${messageId}/edit`,
+  /** DELETE: one of the user's own messages. */
+  message: (projectId: string, threadId: string, messageId: string) => `/project/${projectId}/thread/${threadId}/messages/${messageId}`,
+  /** POST: mark a thread resolved. */
+  resolveThread: (projectId: string, docId: string, threadId: string) => `/project/${projectId}/doc/${docId}/thread/${threadId}/resolve`,
+  /** POST: reopen a resolved thread. */
+  reopenThread: (projectId: string, docId: string, threadId: string) => `/project/${projectId}/doc/${docId}/thread/${threadId}/reopen`,
+  /** DELETE: a whole thread and its highlight in the document. */
+  thread: (projectId: string, docId: string, threadId: string) => `/project/${projectId}/doc/${docId}/thread/${threadId}`,
 };
 
 /** Header that carries the CSRF token on a POST. */
@@ -43,6 +56,17 @@ export function sessionCookieName(origin: string | undefined): string | undefine
 export function parseCsrf(html: string): string | undefined {
   const tag = html.match(/<meta\b[^>]*\bname=["']ol-csrfToken["'][^>]*>/i)?.[0];
   return tag?.match(/\bcontent=["']([^"']+)["']/i)?.[1];
+}
+
+/** The signed-in user's id in the project page's `<meta name="ol-user_id" content="...">`. */
+export function parseUserId(html: string): string | undefined {
+  const tag = html.match(/<meta\b[^>]*\bname=["']ol-user_id["'][^>]*>/i)?.[0];
+  return tag?.match(/\bcontent=["']([^"']+)["']/i)?.[1];
+}
+
+/** Ids go into request paths, so only Overleaf's hex ids are let through. */
+export function isWebId(id: string | undefined): id is string {
+  return !!id && /^[a-f0-9]{10,}$/i.test(id);
 }
 
 export interface WebProject {
@@ -137,6 +161,9 @@ export function describeCompileStatus(status: string): string {
 }
 
 export interface WebMessage {
+  id?: string;
+  /** Who wrote it, to tell the user's own messages (which they may edit and delete) from others'. */
+  userId?: string;
   author: string;
   content: string;
   timestamp?: Date;
@@ -157,7 +184,9 @@ export function parseThreads(json: unknown): Map<string, WebThread> {
   for (const [id, t] of Object.entries(json as Record<string, unknown>)) {
     const thread = t as { resolved?: unknown; messages?: unknown };
     const messages = (Array.isArray(thread?.messages) ? thread.messages : [])
-      .map((m: { content?: unknown; timestamp?: unknown; user?: { first_name?: unknown; last_name?: unknown; email?: unknown } }) => ({
+      .map((m: { id?: unknown; _id?: unknown; user_id?: unknown; content?: unknown; timestamp?: unknown; user?: { id?: unknown; _id?: unknown; first_name?: unknown; last_name?: unknown } }) => ({
+        id: firstString(m?.id, m?._id),
+        userId: firstString(m?.user_id, m?.user?.id, m?.user?._id),
         author: authorName(m?.user),
         content: typeof m?.content === 'string' ? m.content : '',
         timestamp: typeof m?.timestamp === 'number' ? new Date(m.timestamp) : undefined,
@@ -168,6 +197,10 @@ export function parseThreads(json: unknown): Map<string, WebThread> {
   return out;
 }
 
+function firstString(...values: unknown[]): string | undefined {
+  return values.find((v): v is string => typeof v === 'string' && !!v);
+}
+
 function authorName(user: { first_name?: unknown; last_name?: unknown } | undefined): string {
   const parts = [user?.first_name, user?.last_name].filter((p): p is string => typeof p === 'string' && !!p);
   return parts.join(' ') || 'Overleaf user';
@@ -175,6 +208,8 @@ function authorName(user: { first_name?: unknown; last_name?: unknown } | undefi
 
 export interface WebCommentAnchor {
   threadId: string;
+  /** The Overleaf document it is in, which resolving, reopening and deleting the thread name. */
+  docId?: string;
   /** The commented text. */
   quote: string;
   /** Its character offset in Overleaf's copy of the document. */
@@ -191,7 +226,7 @@ export function parseRanges(json: unknown): WebCommentAnchor[] {
       const op = c?.op;
       const threadId = typeof op?.t === 'string' ? op.t : typeof c?.id === 'string' ? c.id : undefined;
       if (threadId && typeof op?.c === 'string' && op.c && typeof op?.p === 'number') {
-        out.push({ threadId, quote: op.c, offset: op.p });
+        out.push({ threadId, docId: typeof doc?.id === 'string' ? doc.id : undefined, quote: op.c, offset: op.p });
       }
     }
   }
