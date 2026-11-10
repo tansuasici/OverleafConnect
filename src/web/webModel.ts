@@ -38,6 +38,8 @@ export interface WebProject {
   /** Archived or trashed: still listed, after the others. */
   inactive: boolean;
   lastUpdated?: Date;
+  /** "owner", "readWrite", "readOnly", ... as the list reports it; overleaf.com sends this but no dates. */
+  accessLevel?: string;
 }
 
 /** Projects from the list endpoint, newest first, archived and trashed ones last. Tolerates a bare array. */
@@ -58,6 +60,7 @@ export function parseProjects(json: unknown): WebProject[] {
       name: typeof p.name === 'string' && p.name ? p.name : id,
       inactive: !!(p.archived || p.trashed),
       lastUpdated: updated && !isNaN(updated.getTime()) ? updated : undefined,
+      accessLevel: typeof p.accessLevel === 'string' ? p.accessLevel : undefined,
     });
   }
   return projects.sort(

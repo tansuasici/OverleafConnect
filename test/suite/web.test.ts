@@ -44,6 +44,9 @@ suite('webModel', () => {
     assert.strictEqual(list[2].inactive, true);
     assert.deepStrictEqual(parseProjects([{ id: 'dddddddddddd' }]).map((p) => p.name), ['dddddddddddd']);
     assert.deepStrictEqual(parseProjects('nope'), []);
+    // overleaf.com's real shape: only _id, name and accessLevel, kept in the server's order.
+    const real = parseProjects({ projects: [{ _id: 'eeeeeeeeeeee', name: 'B', accessLevel: 'readWrite' }, { _id: 'ffffffffffff', name: 'A', accessLevel: 'owner' }] });
+    assert.deepStrictEqual(real.map((p) => [p.name, p.accessLevel]), [['B', 'readWrite'], ['A', 'owner']]);
   });
 
   test('parseCompile resolves URLs on the origin and drops foreign ones', () => {

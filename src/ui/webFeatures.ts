@@ -58,7 +58,7 @@ export async function pickProjectToClone(authManager: AuthManager, serverUrl: st
   type Item = vscode.QuickPickItem & { id: string };
   const items: Item[] = projects.map((p) => ({
     label: p.name,
-    description: p.inactive ? 'archived' : p.lastUpdated?.toLocaleDateString(),
+    description: p.inactive ? 'archived' : p.accessLevel && p.accessLevel !== 'owner' ? 'shared with you' : p.lastUpdated?.toLocaleDateString(),
     detail: p.id,
     id: p.id,
   }));
